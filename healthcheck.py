@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 MATON_BASE = "https://gateway.maton.ai"
 MEETING_NOTES_FOLDER = "1kQ2qRpeYcr9ZFboPGM3sz_4vQBNvVZu8"
-SLACK_CHANNEL = "D0AH3TF0YAD"
+SLACK_CHANNEL = "C09M7UT9EJE"  # #trc-ops
 LOG_FILE = "/home/ubuntu/logs/daily-digest-healthcheck.log"
 SCRIPT_DIR = "/home/ubuntu/.openclaw/skills/daily-digest"
 CRON_PATTERN = "daily-digest"
