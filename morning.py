@@ -106,8 +106,26 @@ def build_digest(today=None) -> str:
     return "\n".join(blocks)
 
 
+def _send_slack(text: str) -> None:
+    """Post to Slack if SLACK_BOT_TOKEN + SLACK_CHANNEL are configured."""
+    body = json.dumps({"channel": os.environ["SLACK_CHANNEL"],
+                       "text": text, "mrkdwn": True}).encode()
+    req = urllib.request.Request(
+        "https://slack.com/api/chat.postMessage", data=body, method="POST",
+        headers={"Authorization": f"Bearer {os.environ['SLACK_BOT_TOKEN']}",
+                 "Content-Type": "application/json"})
+    r = json.load(urllib.request.urlopen(req, timeout=20))
+    if not r.get("ok"):
+        raise SystemExit(f"slack post failed: {r.get('error')}")
+
+
 def main() -> int:
-    print(build_digest())
+    text = build_digest()
+    if not os.environ.get("DRY_RUN") and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
+        _send_slack(text)
+        print("morning digest posted to Slack.")
+    else:
+        print(text)
     return 0
 
 
