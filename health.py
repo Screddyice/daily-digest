@@ -137,12 +137,87 @@ def _recent_avg(daily: dict[str, float], days: int = 7) -> float | None:
     return sum(recent) / len(recent) if recent else None
 
 
+def _trend_arrow(daily: dict[str, float], days: int = 7) -> str:
+    """↗ / ↘ / → over the last `days` (regression-slope sign, ≥1%/day to count)."""
+    items = sorted(daily.items())[-days:]
+    if len(items) < 3:
+        return ""
+    n = len(items)
+    xs = list(range(n))
+    ys = [v for _, v in items]
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+    den = sum((x - mx) ** 2 for x in xs) or 1.0
+    slope = num / den
+    if not my or abs(slope) / abs(my) < 0.01:
+        return "→"
+    return "↗" if slope > 0 else "↘"
+
+
+def _activity_label(today_val: float, avg: float) -> str:
+    if not avg:
+        return ""
+    r = today_val / avg
+    if r < 0.5:
+        return "light day"
+    if r < 0.8:
+        return "below average"
+    if r < 1.2:
+        return "average day"
+    if r < 1.5:
+        return "active day"
+    return "high-activity day"
+
+
+def _rhr_label(delta: float) -> str:
+    """Resting-HR delta vs baseline → plain meaning (lower = better recovery)."""
+    if delta <= -3:
+        return "good recovery"
+    if delta <= 0:
+        return "slightly low (good)"
+    if delta <= 3:
+        return "normal"
+    if delta <= 6:
+        return "slightly elevated"
+    return "elevated — possible stress"
+
+
+def _spo2_label(v: float) -> str:
+    if v >= 95:
+        return "normal"
+    if v >= 92:
+        return "slightly low"
+    return "low — recheck"
+
+
+def _hrv_trend_text(arrow: str) -> str:
+    return {"↗": "rising 7d", "↘": "falling 7d", "→": "stable 7d"}.get(arrow, "")
+
+
+def _rhr_trend_text(arrow: str) -> str:
+    # for resting HR, lower = better — annotate direction in those terms
+    return {"↗": "rising 7d (less recovery)",
+            "↘": "falling 7d (favorable)",
+            "→": "stable 7d"}.get(arrow, "")
+
+
+def _nights_logged(daily: dict[str, float], days: int, today: date) -> int:
+    cutoff = (today - timedelta(days=days - 1)).isoformat()
+    return sum(1 for d in daily if d >= cutoff)
+
+
 # --------------------------------------------------------------------- render
 def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) -> str:
-    """Render the health section from already-fetched daily values. Pure."""
+    """Render the health section from already-fetched daily values. Pure.
+
+    Each stat is paired with (a) a plain-English meaning word and (b) a 7-day
+    trend, so the reader sees both the value and what it implies — not just a
+    raw number floating without context.
+    """
     lines: list[str] = [f"\U0001f4aa Health — {today:%a %b %-d}"]
 
-    # Activity: always shown from the most recent day with data (iPhone-sourced).
+    # ---------- Activity (iPhone-sourced; always shown if any data) ----------
     steps = daily_by_metric.get("step_count", {})
     activity_day = max(steps) if steps else None
     parts: list[str] = []
@@ -152,11 +227,22 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
             parts.append(f"{fmt.format(daily[max(daily)])} {label}")
     if parts:
         day_lbl = f" ({date.fromisoformat(activity_day):%a})" if activity_day else ""
-        avg = _recent_avg(steps)
-        avg_str = f"  ·  7-day avg {avg:,.0f} steps" if avg else ""
-        lines.append(f"  Activity{day_lbl} — " + " · ".join(parts) + avg_str)
+        lines.append(f"  Activity{day_lbl}: " + " · ".join(parts))
+        if steps and len(steps) >= 3:
+            avg = _recent_avg(steps, 7) or 0
+            today_steps = steps[max(steps)]
+            arrow = _trend_arrow(steps, 7)
+            label = _activity_label(today_steps, avg)
+            if avg:
+                pct = (today_steps - avg) / avg * 100
+                comp = f"vs 7-day avg {avg:,.0f} ({pct:+.0f}%)"
+            else:
+                comp = ""
+            extras = [x for x in (arrow, label, comp) if x]
+            if extras:
+                lines.append("    " + " — ".join(extras[:2]) + ((" " + extras[2]) if len(extras) > 2 else ""))
 
-    # Watch state drives recovery + sleep.
+    # ---------- Watch state drives recovery + sleep ----------
     gaps = [
         g for g in (_days_since_last(daily_by_metric.get(m, {}), today) for m in WRIST_GAP_METRICS)
         if g is not None
@@ -164,31 +250,38 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     wrist_gap = min(gaps) if gaps else None
 
     if wrist_gap is not None and wrist_gap <= WRIST_FRESH_DAYS:
-        rec: list[str] = []
+        lines.append("  Recovery:")
         hrv = daily_by_metric.get("heart_rate_variability", {})
         f_hrv = per_metric_finding(hrv, freshness_hours=24 * (WRIST_FRESH_DAYS + 1))
         if "z_score" in f_hrv:
-            rec.append(f"HRV {f_hrv['recent_mean']:.0f} ms ({f_hrv['z_score']:+.1f} SD, {_recovery_word(f_hrv['z_score'])})")
+            arrow = _trend_arrow(hrv, 7)
+            trend = _hrv_trend_text(arrow)
+            extras = " · ".join(filter(None, [f"{arrow} {trend}".strip(), f"{f_hrv['z_score']:+.1f} SD vs baseline"]))
+            lines.append(f"    • HRV {f_hrv['recent_mean']:.0f} ms — {_recovery_word(f_hrv['z_score'])} ({extras})")
         elif hrv:
-            rec.append(f"HRV {hrv[max(hrv)]:.0f} ms")
+            lines.append(f"    • HRV {hrv[max(hrv)]:.0f} ms")
         rhr = daily_by_metric.get("resting_heart_rate", {})
         if rhr:
             f_rhr = per_metric_finding(rhr, freshness_hours=24 * (WRIST_FRESH_DAYS + 1))
             if f_rhr.get("baseline_mean"):
-                rec.append(f"Resting HR {f_rhr['recent_mean']:.0f} bpm ({f_rhr['recent_mean'] - f_rhr['baseline_mean']:+.0f} vs baseline)")
+                delta = f_rhr["recent_mean"] - f_rhr["baseline_mean"]
+                arrow = _trend_arrow(rhr, 7)
+                trend = _rhr_trend_text(arrow)
+                extras = " · ".join(filter(None, [f"{arrow} {trend}".strip(), f"{delta:+.0f} bpm vs baseline"]))
+                lines.append(f"    • Resting HR {f_rhr['recent_mean']:.0f} bpm — {_rhr_label(delta)} ({extras})")
             else:
-                rec.append(f"Resting HR {rhr[max(rhr)]:.0f} bpm")
+                lines.append(f"    • Resting HR {rhr[max(rhr)]:.0f} bpm")
         spo2 = daily_by_metric.get("blood_oxygen_saturation", {})
         if spo2:
-            rec.append(f"SpO₂ {spo2[max(spo2)]:.0f}%")
-        if rec:
-            lines.append("  Recovery: " + " · ".join(rec))
+            v = spo2[max(spo2)]
+            lines.append(f"    • SpO₂ {v:.0f}% — {_spo2_label(v)}")
         sleep = daily_by_metric.get("sleep_analysis", {})
         s_gap = _days_since_last(sleep, today)
+        nights = _nights_logged(sleep, 7, today)
         if s_gap is not None and s_gap <= 1:
-            lines.append(f"  Sleep: {sleep[max(sleep)]:.1f} h")
+            lines.append(f"  Sleep: {sleep[max(sleep)]:.1f} h · {nights}/7 nights logged this week")
         else:
-            lines.append("  Sleep: not recorded last night (watch not worn overnight)")
+            lines.append(f"  Sleep: not recorded last night · {nights}/7 nights logged this week (watch off overnight)")
         lines.append("  ⌚ Watch on")
     else:
         if wrist_gap is None:
