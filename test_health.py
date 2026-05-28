@@ -28,11 +28,12 @@ class WatchStateTests(unittest.TestCase):
         }
         out = health.render_section(data, TODAY)
         self.assertIn("⌚ Watch on", out)
-        self.assertIn("Recovery:", out)
         self.assertIn("HRV", out)
         self.assertNotIn("Watch off", out)
         self.assertIn("10,000 steps", out)
-        self.assertIn("Sleep: 7.5 h", out)
+        self.assertIn("7.5 h", out)               # appears as "*Sleep:* 7.5 h last night …"
+        self.assertIn("vs yesterday", out)         # explicit comparison label
+        self.assertIn("vs week ago", out)
 
     def test_watch_off_keeps_activity_and_states_the_gap(self):
         last_watch = TODAY - timedelta(days=6)

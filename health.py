@@ -207,40 +207,67 @@ def _nights_logged(daily: dict[str, float], days: int, today: date) -> int:
     return sum(1 for d in daily if d >= cutoff)
 
 
+def _value_n_days_ago(daily: dict[str, float], today: date, n: int) -> float | None:
+    """The most recent recorded value on or before (today - n days)."""
+    if not daily:
+        return None
+    target = (today - timedelta(days=n)).isoformat()
+    candidates = [d for d in daily if d <= target]
+    if not candidates:
+        return None
+    return daily[max(candidates)]
+
+
+def _signed_int(delta: float) -> str:
+    """'+2' / '-2' / '0' — no '+0' / '-0' noise."""
+    return f"{delta:+.0f}" if delta else "0"
+
+
+def _signed_pct(delta: float, base: float) -> str:
+    if not base:
+        return "—"
+    return f"{delta / base * 100:+.0f}%"
+
+
 # --------------------------------------------------------------------- render
 def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) -> str:
-    """Render the health section from already-fetched daily values. Pure.
+    """Render the health section. Pure.
 
-    Each stat is paired with (a) a plain-English meaning word and (b) a 7-day
-    trend, so the reader sees both the value and what it implies — not just a
-    raw number floating without context.
+    One block per stat: a header line with the value + plain-English meaning,
+    then a *comparisons* line that names its reference points explicitly —
+    `vs yesterday X (±Δ)` and `vs week ago Y (±Δ)` — so the reader never has to
+    guess what the trend is being measured against.
     """
-    lines: list[str] = [f"\U0001f4aa Health — {today:%a %b %-d}"]
+    L: list[str] = [f"\U0001f4aa Health — {today:%a %b %-d}", ""]
 
     # ---------- Activity (iPhone-sourced; always shown if any data) ----------
     steps = daily_by_metric.get("step_count", {})
     activity_day = max(steps) if steps else None
     parts: list[str] = []
     for metric, _how, label, fmt in ACTIVITY_METRICS:
-        daily = daily_by_metric.get(metric, {})
-        if daily:
-            parts.append(f"{fmt.format(daily[max(daily)])} {label}")
+        d = daily_by_metric.get(metric, {})
+        if d:
+            parts.append(f"{fmt.format(d[max(d)])} {label}")
     if parts:
         day_lbl = f" ({date.fromisoformat(activity_day):%a})" if activity_day else ""
-        lines.append(f"  Activity{day_lbl}: " + " · ".join(parts))
-        if steps and len(steps) >= 3:
-            avg = _recent_avg(steps, 7) or 0
-            today_steps = steps[max(steps)]
-            arrow = _trend_arrow(steps, 7)
-            label = _activity_label(today_steps, avg)
-            if avg:
-                pct = (today_steps - avg) / avg * 100
-                comp = f"vs 7-day avg {avg:,.0f} ({pct:+.0f}%)"
-            else:
-                comp = ""
-            extras = [x for x in (arrow, label, comp) if x]
-            if extras:
-                lines.append("    " + " — ".join(extras[:2]) + ((" " + extras[2]) if len(extras) > 2 else ""))
+        today_steps = steps[max(steps)] if steps else 0
+        avg7 = _recent_avg(steps, 7) or 0
+        label = _activity_label(today_steps, avg7) if avg7 else ""
+        header = f"*Activity{day_lbl}:* " + " · ".join(parts)
+        if label:
+            header += f"  _{label}_"
+        L.append(header)
+        if steps:
+            comps: list[str] = []
+            y = _value_n_days_ago(steps, today, 1)
+            w = _value_n_days_ago(steps, today, 7)
+            if y is not None:
+                comps.append(f"vs yesterday {y:,.0f} ({_signed_pct(today_steps - y, y)})")
+            if w is not None:
+                comps.append(f"vs week ago {w:,.0f} ({_signed_pct(today_steps - w, w)})")
+            if comps:
+                L.append("   " + "  ·  ".join(comps))
+        L.append("")
 
     # ---------- Watch state drives recovery + sleep ----------
     gaps = [
@@ -250,52 +277,81 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     wrist_gap = min(gaps) if gaps else None
 
     if wrist_gap is not None and wrist_gap <= WRIST_FRESH_DAYS:
-        lines.append("  Recovery:")
+        # ---- HRV (higher = better recovery) ----
         hrv = daily_by_metric.get("heart_rate_variability", {})
-        f_hrv = per_metric_finding(hrv, freshness_hours=24 * (WRIST_FRESH_DAYS + 1))
-        if "z_score" in f_hrv:
-            arrow = _trend_arrow(hrv, 7)
-            trend = _hrv_trend_text(arrow)
-            extras = " · ".join(filter(None, [f"{arrow} {trend}".strip(), f"{f_hrv['z_score']:+.1f} SD vs baseline"]))
-            lines.append(f"    • HRV {f_hrv['recent_mean']:.0f} ms — {_recovery_word(f_hrv['z_score'])} ({extras})")
-        elif hrv:
-            lines.append(f"    • HRV {hrv[max(hrv)]:.0f} ms")
+        if hrv:
+            today_val = hrv[max(hrv)]
+            f_hrv = per_metric_finding(hrv, freshness_hours=24 * (WRIST_FRESH_DAYS + 1))
+            word = _recovery_word(f_hrv["z_score"]) if "z_score" in f_hrv else ""
+            header = f"*HRV:* {today_val:.0f} ms"
+            if word:
+                header += f"  _{word}_"
+            L.append(header)
+            comps = []
+            y = _value_n_days_ago(hrv, today, 1)
+            w = _value_n_days_ago(hrv, today, 7)
+            if y is not None:
+                comps.append(f"vs yesterday {y:.0f} ms ({_signed_int(today_val - y)} ms)")
+            if w is not None:
+                comps.append(f"vs week ago {w:.0f} ms ({_signed_int(today_val - w)} ms)")
+            if comps:
+                L.append("   " + "  ·  ".join(comps))
+            L.append("")
+
+        # ---- Resting HR (lower = better recovery) ----
         rhr = daily_by_metric.get("resting_heart_rate", {})
         if rhr:
+            today_val = rhr[max(rhr)]
             f_rhr = per_metric_finding(rhr, freshness_hours=24 * (WRIST_FRESH_DAYS + 1))
+            word = ""
             if f_rhr.get("baseline_mean"):
-                delta = f_rhr["recent_mean"] - f_rhr["baseline_mean"]
-                arrow = _trend_arrow(rhr, 7)
-                trend = _rhr_trend_text(arrow)
-                extras = " · ".join(filter(None, [f"{arrow} {trend}".strip(), f"{delta:+.0f} bpm vs baseline"]))
-                lines.append(f"    • Resting HR {f_rhr['recent_mean']:.0f} bpm — {_rhr_label(delta)} ({extras})")
-            else:
-                lines.append(f"    • Resting HR {rhr[max(rhr)]:.0f} bpm")
+                word = _rhr_label(f_rhr["recent_mean"] - f_rhr["baseline_mean"])
+            header = f"*Resting HR:* {today_val:.0f} bpm"
+            if word:
+                header += f"  _{word}_"
+            L.append(header)
+            comps = []
+            y = _value_n_days_ago(rhr, today, 1)
+            w = _value_n_days_ago(rhr, today, 7)
+            if y is not None:
+                comps.append(f"vs yesterday {y:.0f} bpm ({_signed_int(today_val - y)} bpm)")
+            if w is not None:
+                comps.append(f"vs week ago {w:.0f} bpm ({_signed_int(today_val - w)} bpm)")
+            if comps:
+                L.append("   " + "  ·  ".join(comps))
+            L.append("")
+
+        # ---- SpO₂ ----
         spo2 = daily_by_metric.get("blood_oxygen_saturation", {})
         if spo2:
             v = spo2[max(spo2)]
-            lines.append(f"    • SpO₂ {v:.0f}% — {_spo2_label(v)}")
+            L.append(f"*SpO₂:* {v:.0f}%  _{_spo2_label(v)}_  (normal range 95–100%)")
+            L.append("")
+
+        # ---- Sleep ----
         sleep = daily_by_metric.get("sleep_analysis", {})
         s_gap = _days_since_last(sleep, today)
         nights = _nights_logged(sleep, 7, today)
         if s_gap is not None and s_gap <= 1:
-            lines.append(f"  Sleep: {sleep[max(sleep)]:.1f} h · {nights}/7 nights logged this week")
+            L.append(f"*Sleep:* {sleep[max(sleep)]:.1f} h last night  ·  {nights}/7 nights logged this week")
         else:
-            lines.append(f"  Sleep: not recorded last night · {nights}/7 nights logged this week (watch off overnight)")
-        lines.append("  ⌚ Watch on")
+            L.append(f"*Sleep:* not recorded last night  ·  {nights}/7 nights logged this week  _watch off overnight_")
+        L.append("")
+
+        L.append("⌚ Watch on")
     else:
         if wrist_gap is None:
-            lines.append("  ⌚ No recent Apple Watch data — recovery & sleep unavailable.")
+            L.append("⌚ No recent Apple Watch data — recovery & sleep unavailable.")
         else:
-            lines.append(
-                f"  ⌚ Watch off {wrist_gap} days — recovery (HRV/resting HR) & sleep paused "
+            L.append(
+                f"⌚ Watch off {wrist_gap} days — recovery (HRV/resting HR) & sleep paused "
                 f"until you wear it (auto-resumes; ~7-day baseline rebuild)."
             )
             hrv = daily_by_metric.get("heart_rate_variability", {})
             if hrv:
                 d = max(hrv)
-                lines.append(f"     Last HRV ({date.fromisoformat(d):%b %-d}): {hrv[d]:.0f} ms.")
-    return "\n".join(lines)
+                L.append(f"   Last HRV ({date.fromisoformat(d):%b %-d}): {hrv[d]:.0f} ms")
+    return "\n".join(L)
 
 
 def build_section(today: date | None = None, *,
