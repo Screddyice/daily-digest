@@ -20,9 +20,10 @@ COMPOSIO_EXECUTE = "https://backend.composio.dev/api/v3/tools/execute/{slug}"
 
 
 def _composio(slug: str, arguments: dict, timeout: float = 40.0) -> dict:
-    """Execute one Composio tool against the NEB account via the REST gateway."""
-    key = os.environ["NEB_COMPOSIO_MCP_API_KEY"]
-    uid = os.environ.get("NEB_COMPOSIO_MCP_USER_ID", "user_uwgmr")
+    """Execute one Composio tool against the TMN account via the REST gateway."""
+    key = os.environ.get("TMN_COMPOSIO_MCP_API_KEY") or os.environ["NEB_COMPOSIO_MCP_API_KEY"]
+    uid = (os.environ.get("TMN_COMPOSIO_MCP_USER_ID")
+           or os.environ.get("NEB_COMPOSIO_MCP_USER_ID", "user_uwgmr"))
     body = json.dumps({"user_id": uid, "arguments": arguments}).encode()
     req = urllib.request.Request(
         COMPOSIO_EXECUTE.format(slug=slug), data=body, method="POST",
