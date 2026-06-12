@@ -20,6 +20,7 @@ import alerts
 import bella
 import health
 import llm
+import meetings
 import trends
 
 PT = ZoneInfo("America/Los_Angeles")
@@ -27,12 +28,14 @@ _UNSET = object()
 
 
 def build_digest(today=None, *, daily_by_metric=None, bella_section=None,
-                 llm_body=_UNSET) -> str:
+                 llm_body=_UNSET, meetings_section=None) -> str:
     today = today or datetime.now(PT).date()
     if daily_by_metric is None:
         daily_by_metric = health.fetch_daily_by_metric()
     if bella_section is None:
         bella_section = bella.build_section(today)
+    if meetings_section is None:
+        meetings_section = meetings.build_section(today)
 
     if llm_body is _UNSET:
         # Snapshot this export, compare against the previous one via the LLM.
@@ -48,15 +51,14 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=None,
 
     header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
     if llm_body:
-        return "\n".join([header, "", llm_body])
-    # deterministic fallback — guaranteed numberless
-    return "\n".join([
-        header,
-        "",
-        trends.render_you_section(daily_by_metric, today),
-        "",
-        bella_section,
-    ])
+        blocks = [header, "", llm_body]
+    else:
+        # deterministic fallback — guaranteed numberless
+        blocks = [header, "", trends.render_you_section(daily_by_metric, today),
+                  "", bella_section]
+    if meetings_section:  # always last; times are the one allowed digit zone
+        blocks += ["", meetings_section]
+    return "\n".join(blocks)
 
 
 def _send_slack(text: str) -> None:
