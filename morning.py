@@ -18,19 +18,36 @@ from zoneinfo import ZoneInfo
 
 import bella
 import health
+import llm
 import trends
 
 PT = ZoneInfo("America/Los_Angeles")
+_UNSET = object()
 
 
-def build_digest(today=None, *, daily_by_metric=None, bella_section=None) -> str:
+def build_digest(today=None, *, daily_by_metric=None, bella_section=None,
+                 llm_body=_UNSET) -> str:
     today = today or datetime.now(PT).date()
     if daily_by_metric is None:
         daily_by_metric = health.fetch_daily_by_metric()
     if bella_section is None:
         bella_section = bella.build_section(today)
+
+    if llm_body is _UNSET:
+        # Snapshot this export, compare against the previous one via the LLM.
+        bella_series = bella.load_history(bella.DEFAULT_HISTORY)
+        previous = llm.load_previous_snapshot(llm.SNAPSHOT_DIR, today)
+        llm.save_snapshot(llm.SNAPSHOT_DIR, today, daily_by_metric, bella_series)
+        llm_body = llm.generate_digest(
+            {"date": today.isoformat(), "you": daily_by_metric, "bella": bella_series},
+            previous, today)
+
+    header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
+    if llm_body:
+        return "\n".join([header, "", llm_body])
+    # deterministic fallback — guaranteed numberless
     return "\n".join([
-        f"☀️  Morning Digest — {today:%A, %B %-d, %Y}",
+        header,
         "",
         trends.render_you_section(daily_by_metric, today),
         "",

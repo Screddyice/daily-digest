@@ -44,6 +44,22 @@ class BuildDigestTests(unittest.TestCase):
                          if "Morning Digest" not in l and not l.startswith("💪"))
         self.assertNotRegex(body, r"\d")
 
+    def test_llm_body_used_verbatim_when_provided(self):
+        llm_body = "💪 You\n\n• Activity: trending down.\n\n🐕 Bella\n\n• Activity: steady."
+        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
+                                   bella_section="🐕 Bella (fallback)",
+                                   llm_body=llm_body)
+        self.assertIn("Morning Digest", out)
+        self.assertIn("• Activity: trending down.", out)
+        self.assertNotIn("(fallback)", out)
+
+    def test_falls_back_to_deterministic_when_llm_body_none(self):
+        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   llm_body=None)
+        self.assertIn("💪 You", out)
+        self.assertIn("🐕 Bella", out)
+
 
 if __name__ == "__main__":
     unittest.main()
