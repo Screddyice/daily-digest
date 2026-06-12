@@ -61,5 +61,30 @@ class BuildDigestTests(unittest.TestCase):
         self.assertIn("🐕 Bella", out)
 
 
+class AlertWiringTests(unittest.TestCase):
+    def test_troublesome_pattern_reaches_the_sender(self):
+        import tempfile
+        from pathlib import Path
+        you = _you_data()
+        you["blood_oxygen_saturation"] = {
+            d: 92.0 for d in you["blood_oxygen_saturation"]}
+        sent = []
+        with tempfile.TemporaryDirectory() as tmp:
+            morning.run_alerts(you, {"steps": {}, "sleep": {}}, TODAY,
+                               send=lambda lines: sent.extend(lines),
+                               state_path=Path(tmp) / "s.json")
+        self.assertTrue(any("oxygen" in a.lower() for a in sent))
+
+    def test_healthy_data_sends_nothing(self):
+        import tempfile
+        from pathlib import Path
+        sent = []
+        with tempfile.TemporaryDirectory() as tmp:
+            morning.run_alerts(_you_data(), {"steps": {}, "sleep": {}}, TODAY,
+                               send=lambda lines: sent.extend(lines),
+                               state_path=Path(tmp) / "s.json")
+        self.assertEqual(sent, [])
+
+
 if __name__ == "__main__":
     unittest.main()

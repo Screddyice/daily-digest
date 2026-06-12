@@ -16,6 +16,7 @@ import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import alerts
 import bella
 import health
 import llm
@@ -68,13 +69,33 @@ def _send_slack(text: str) -> None:
         raise SystemExit(f"slack post failed: {r.get('error')}")
 
 
+def run_alerts(daily_by_metric, bella_series, today, *,
+               send=alerts.send_telegram, state_path=alerts.STATE_PATH) -> None:
+    """Detect troublesome patterns and Telegram only the newly-appeared ones."""
+    new = alerts.edge_filter(alerts.detect_alerts(daily_by_metric, bella_series, today),
+                             state_path)
+    if new:
+        send(new)
+
+
 def main() -> int:
-    text = build_digest()
-    if not os.environ.get("DRY_RUN") and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
+    today = datetime.now(PT).date()
+    daily_by_metric = health.fetch_daily_by_metric()
+    bella_section = bella.build_section(today)  # also refreshes Bella's history
+    text = build_digest(today, daily_by_metric=daily_by_metric,
+                        bella_section=bella_section)
+    dry = bool(os.environ.get("DRY_RUN"))
+    if not dry and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
         _send_slack(text)
         print("morning digest posted to Slack.")
     else:
         print(text)
+    bella_series = bella.load_history(bella.DEFAULT_HISTORY)
+    if dry:
+        found = alerts.detect_alerts(daily_by_metric, bella_series, today)
+        print(f"[dry-run] alerts that would be considered: {found or 'none'}")
+    else:
+        run_alerts(daily_by_metric, bella_series, today)
     return 0
 
 
