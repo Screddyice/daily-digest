@@ -36,6 +36,38 @@ REST_RESPONSE = {
     ]}}}
 }
 
+# Real shape captured from the Fi app (HealthTrends / getPetHealthTrendsForPet).
+TRENDS_RESPONSE = {
+    "data": {"getPetHealthTrendsForPet": {
+        "period": "DAY",
+        "genericTrends": [
+            {"title": "Rest", "disabled": False, "summaryComponents": {
+                "eventsSummary": "0 interruptions", "durationSummary": "6hr 59min",
+                "eventsChange": None, "durationChange": None}},
+            {"title": "Activity", "disabled": False, "summaryComponents": {
+                "eventsSummary": "325 steps", "durationSummary": "0min",
+                "eventsChange": None, "durationChange": None}},
+        ],
+        "behaviorTrends": [
+            {"title": "Barking", "disabled": False, "summaryComponents": {
+                "eventsSummary": None, "durationSummary": None,
+                "eventsChange": None, "durationChange": None}},
+            {"title": "Eating", "disabled": False, "summaryComponents": {
+                "eventsSummary": "3 events", "durationSummary": "4min",
+                "eventsChange": None, "durationChange": None}},
+            {"title": "Drinking", "disabled": False, "summaryComponents": {
+                "eventsSummary": "5 events", "durationSummary": "2min",
+                "eventsChange": None, "durationChange": None}},
+            {"title": "Licking", "disabled": False, "summaryComponents": {
+                "eventsSummary": "2 events", "durationSummary": "1min",
+                "eventsChange": None, "durationChange": None}},
+            {"title": "Scratching", "disabled": False, "summaryComponents": {
+                "eventsSummary": None, "durationSummary": None,
+                "eventsChange": None, "durationChange": None}},
+        ],
+    }}
+}
+
 
 class ParseTests(unittest.TestCase):
     def test_find_pet_by_name_case_insensitive(self):
@@ -71,6 +103,45 @@ class ParseTests(unittest.TestCase):
         self.assertIn("2026-06-11", out)
 
 
+class TrendParseTests(unittest.TestCase):
+    def test_parse_count_handles_all_captured_formats(self):
+        self.assertEqual(bella.parse_count("2 events"), 2.0)
+        self.assertEqual(bella.parse_count("325 steps"), 325.0)
+        self.assertEqual(bella.parse_count("0 interruptions"), 0.0)
+        self.assertEqual(bella.parse_count("1.6 events/day"), 1.6)
+        self.assertEqual(bella.parse_count("2,987 steps/day"), 2987.0)
+        self.assertIsNone(bella.parse_count(None))
+
+    def test_parse_minutes_handles_all_captured_formats(self):
+        self.assertEqual(bella.parse_minutes("6hr 59min"), 419.0)
+        self.assertEqual(bella.parse_minutes("1min"), 1.0)
+        self.assertEqual(bella.parse_minutes("0min"), 0.0)
+        self.assertEqual(bella.parse_minutes("5m/day"), 5.0)
+        self.assertEqual(bella.parse_minutes("<1m/day"), 0.5)
+        self.assertEqual(bella.parse_minutes("18hr 57min/day"), 1137.0)
+        self.assertIsNone(bella.parse_minutes(None))
+
+    def test_parse_health_trends_extracts_event_counts_per_behavior(self):
+        out = bella.parse_health_trends(TRENDS_RESPONSE)
+        self.assertEqual(out["eating_events"], 3.0)
+        self.assertEqual(out["drinking_events"], 5.0)
+        self.assertEqual(out["licking_events"], 2.0)
+        self.assertEqual(out["activity_steps"], 325.0)
+        self.assertEqual(out["rest_min"], 419.0)
+
+    def test_parse_health_trends_records_zero_for_no_event_behaviors(self):
+        """A behavior present but with null summary = zero events today, not missing."""
+        out = bella.parse_health_trends(TRENDS_RESPONSE)
+        self.assertEqual(out["barking_events"], 0.0)
+        self.assertEqual(out["scratching_events"], 0.0)
+
+    def test_parse_health_trends_skips_disabled_behaviors(self):
+        resp = {"data": {"getPetHealthTrendsForPet": {"period": "DAY",
+            "genericTrends": [], "behaviorTrends": [
+                {"title": "Barking", "disabled": True, "summaryComponents": None}]}}}
+        self.assertNotIn("barking_events", bella.parse_health_trends(resp))
+
+
 class HistoryTests(unittest.TestCase):
     def test_history_appends_and_overwrites_per_day(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -93,7 +164,8 @@ class BuildSectionTests(unittest.TestCase):
         self.assertIn("not configured", out.lower())
 
     def test_build_section_with_injected_gql(self):
-        responses = {"pets": PETS_RESPONSE, "steps": STEPS_RESPONSE, "rest": REST_RESPONSE}
+        responses = {"pets": PETS_RESPONSE, "steps": STEPS_RESPONSE,
+                     "rest": REST_RESPONSE, "trends": TRENDS_RESPONSE}
 
         def fake_gql(kind, **kw):
             return responses[kind]
@@ -111,6 +183,10 @@ class BuildSectionTests(unittest.TestCase):
             self.assertIn("Sleep:", out)
             # today's live reading landed in the history file
             self.assertEqual(bella.load_history(path)["steps"][TODAY.isoformat()], 8421.0)
+            # behavior counts captured into history too
+            hist = bella.load_history(path)
+            self.assertEqual(hist["eating_events"][TODAY.isoformat()], 3.0)
+            self.assertEqual(hist["drinking_events"][TODAY.isoformat()], 5.0)
 
     def test_sleep_feed_merges_into_history_for_depth(self):
         """Fi's rest feed only returns the last few days; runs must accumulate

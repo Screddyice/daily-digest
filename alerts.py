@@ -70,6 +70,24 @@ def detect_alerts(daily_by_metric: dict, bella_series: dict, today: date) -> lis
         found.append("Bella: she's resting much less than usual — "
                      "possible restlessness or discomfort.")
 
+    # Health-significant Series 3+ behavior shifts.
+    def _sharp(key, direction):
+        d = bella_series.get(key, {})
+        return trends.classify_trend(d, today) == direction and trends.is_sharp_move(d, today)
+
+    if _sharp("scratching_events", "up"):
+        found.append("Bella: scratching has spiked vs her usual — "
+                     "possible skin irritation, allergies, or fleas. Worth a closer look.")
+    if _sharp("licking_events", "up"):
+        found.append("Bella: licking has spiked vs her usual — "
+                     "can signal irritation, allergies, pain, or stress.")
+    if _sharp("drinking_events", "up"):
+        found.append("Bella: she's drinking a lot more than usual — "
+                     "excess thirst can be an early health flag, keep an eye on it.")
+    if _sharp("eating_events", "down"):
+        found.append("Bella: she's eating much less than usual — "
+                     "appetite drop is worth watching, especially if it continues.")
+
     return found
 
 

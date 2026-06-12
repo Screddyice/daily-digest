@@ -208,4 +208,40 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
             "steady": "• Sleep: normal — her usual rest pattern.",
             None: "• Sleep: not enough history yet to read a trend.",
         }[t])
+
+    # ---- Series 3+ AI behaviors (direction only, health-flavored phrasing) ----
+    for key, label, up, down, steady in PET_BEHAVIORS:
+        d = series.get(key, {})
+        if not d:
+            continue
+        t = classify_trend(d, today)
+        if t is None:
+            continue
+        L.append({"up": f"• {label}: {up}", "down": f"• {label}: {down}",
+                  "steady": f"• {label}: {steady}"}[t])
     return "\n".join(L)
+
+
+# (series key, label, up phrasing, down phrasing, steady phrasing) — health-aware.
+PET_BEHAVIORS = (
+    ("eating_events", "Eating",
+     "eating more often than usual — good appetite.",
+     "eating less often than usual — watch her appetite.",
+     "eating about as usual."),
+    ("drinking_events", "Drinking",
+     "drinking more than usual — worth noting if it keeps climbing.",
+     "drinking less than usual — keep an eye on her water intake.",
+     "drinking about as usual."),
+    ("scratching_events", "Scratching",
+     "scratching more than usual — possible itch, skin, or fleas.",
+     "scratching less than usual — good.",
+     "scratching about as usual."),
+    ("licking_events", "Licking",
+     "licking more than usual — can signal irritation, allergies, or stress.",
+     "licking less than usual — good.",
+     "licking about as usual."),
+    ("barking_events", "Barking",
+     "barking more than usual — more alert or unsettled than normal.",
+     "barking less than usual — calmer than normal.",
+     "barking about as usual."),
+)

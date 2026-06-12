@@ -74,6 +74,33 @@ class DetectorTests(unittest.TestCase):
         found = alerts.detect_alerts(_healthy_you(), bella, TODAY)
         self.assertTrue(any("Bella" in a for a in found))
 
+    def test_bella_scratching_spike_alerts_skin(self):
+        bella = _healthy_bella()
+        bella["scratching_events"] = _flat_then(TODAY, 2, [8, 9, 10])
+        found = alerts.detect_alerts(_healthy_you(), bella, TODAY)
+        self.assertTrue(any("Bella" in a and ("scratch" in a.lower() or "skin" in a.lower())
+                            for a in found))
+
+    def test_bella_drinking_spike_alerts(self):
+        bella = _healthy_bella()
+        bella["drinking_events"] = _flat_then(TODAY, 5, [12, 14, 15])
+        found = alerts.detect_alerts(_healthy_you(), bella, TODAY)
+        self.assertTrue(any("Bella" in a and "drink" in a.lower() for a in found))
+
+    def test_bella_eating_collapse_alerts_appetite(self):
+        bella = _healthy_bella()
+        bella["eating_events"] = _flat_then(TODAY, 6, [2, 1, 1])
+        found = alerts.detect_alerts(_healthy_you(), bella, TODAY)
+        self.assertTrue(any("Bella" in a and ("eat" in a.lower() or "appetite" in a.lower())
+                            for a in found))
+
+    def test_healthy_behaviors_raise_no_alerts(self):
+        bella = _healthy_bella()
+        for k in ("scratching_events", "drinking_events", "eating_events",
+                  "licking_events", "barking_events"):
+            bella[k] = _series(TODAY, 17, 4)
+        self.assertEqual(alerts.detect_alerts(_healthy_you(), bella, TODAY), [])
+
     def test_alerts_contain_no_numbers(self):
         you = _healthy_you()
         you["blood_oxygen_saturation"] = _flat_then(TODAY, 97, [93, 92, 92])

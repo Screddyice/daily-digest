@@ -208,6 +208,32 @@ class BellaSectionTests(unittest.TestCase):
         self.assertIn("Bella", out)
         self.assertIn("no", out.lower())
 
+    def test_bella_behaviors_rendered_with_direction_no_numbers(self):
+        series = {
+            "steps": _series(TODAY, 17, 8000),
+            "sleep": _series(TODAY, 17, 700.0),
+            "eating_events": _flat_then(TODAY, 3, [5, 6, 7]),       # rising
+            "drinking_events": _series(TODAY, 17, 5),               # steady
+            "scratching_events": _flat_then(TODAY, 2, [6, 7, 8]),   # rising (skin?)
+            "licking_events": _flat_then(TODAY, 4, [2, 1, 1]),      # falling
+            "barking_events": _series(TODAY, 17, 1),
+        }
+        out = trends.render_pet_section("Bella", series, TODAY)
+        body = "\n".join(l for l in out.splitlines() if "Bella" not in l)
+        self.assertNotRegex(body, r"\d")
+        low = out.lower()
+        self.assertIn("eating", low)
+        self.assertIn("drinking", low)
+        self.assertIn("scratching", low)
+        eat = next(l for l in out.splitlines() if "Eating" in l)
+        self.assertIn("more", eat.lower())
+
+    def test_bella_behavior_absent_is_skipped_not_faked(self):
+        series = {"steps": _series(TODAY, 17, 8000), "sleep": _series(TODAY, 17, 700.0)}
+        out = trends.render_pet_section("Bella", series, TODAY)
+        self.assertNotIn("Eating", out)
+        self.assertNotIn("Barking", out)
+
     def test_bella_stale_data_warns(self):
         old_end = TODAY - timedelta(days=4)
         out = trends.render_pet_section(
