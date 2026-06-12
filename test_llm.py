@@ -48,25 +48,65 @@ class PromptTests(unittest.TestCase):
 
 class GenerateTests(unittest.TestCase):
     def test_returns_llm_text_when_clean(self):
-        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY,
+        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY, hermes=None,
                                   call=lambda s, u: GOOD_OUTPUT, api_key="sk-x")
         self.assertEqual(out, GOOD_OUTPUT)
 
     def test_rejects_output_containing_digits(self):
         dirty = "• Activity: down 23% from 6000 steps."
-        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY,
+        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY, hermes=None,
                                   call=lambda s, u: dirty, api_key="sk-x")
         self.assertIsNone(out)
 
     def test_returns_none_without_api_key(self):
-        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY,
+        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY, hermes=None,
                                   call=lambda s, u: GOOD_OUTPUT, api_key="")
         self.assertIsNone(out)
 
     def test_returns_none_on_api_error(self):
         def boom(s, u):
             raise OSError("api down")
-        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY, call=boom, api_key="sk-x")
+        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY, hermes=None,
+                                  call=boom, api_key="sk-x")
+        self.assertIsNone(out)
+
+
+class HermesBackendTests(unittest.TestCase):
+    def test_hermes_is_preferred_over_anthropic(self):
+        out = llm.generate_digest(
+            CURRENT, PREVIOUS, TODAY,
+            hermes=lambda prompt: GOOD_OUTPUT,
+            call=lambda s, u: "anthropic output", api_key="sk-x")
+        self.assertEqual(out, GOOD_OUTPUT)
+
+    def test_hermes_prompt_contains_both_exports(self):
+        seen = {}
+
+        def fake_hermes(prompt):
+            seen["prompt"] = prompt
+            return GOOD_OUTPUT
+
+        llm.generate_digest(CURRENT, PREVIOUS, TODAY, hermes=fake_hermes, api_key="")
+        self.assertIn("2026-06-12", seen["prompt"])
+        self.assertIn("2026-06-11", seen["prompt"])
+
+    def test_hermes_failure_falls_back_to_anthropic(self):
+        def boom(prompt):
+            raise OSError("hermes down")
+        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY, hermes=boom,
+                                  call=lambda s, u: GOOD_OUTPUT, api_key="sk-x")
+        self.assertEqual(out, GOOD_OUTPUT)
+
+    def test_hermes_digit_output_falls_back_to_anthropic(self):
+        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY,
+                                  hermes=lambda p: "down 23%",
+                                  call=lambda s, u: GOOD_OUTPUT, api_key="sk-x")
+        self.assertEqual(out, GOOD_OUTPUT)
+
+    def test_all_backends_dirty_returns_none(self):
+        out = llm.generate_digest(CURRENT, PREVIOUS, TODAY,
+                                  hermes=lambda p: "down 23%",
+                                  call=lambda s, u: "up 5%", api_key="sk-x")
         self.assertIsNone(out)
 
 

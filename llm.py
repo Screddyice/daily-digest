@@ -17,6 +17,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import urllib.request
 from datetime import date
 from pathlib import Path
@@ -25,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-4-8"
 API_URL = "https://api.anthropic.com/v1/messages"
+HERMES_BIN = os.environ.get("HERMES_BIN") or str(Path.home() / ".local" / "bin" / "hermes")
+HERMES_TIMEOUT = 300
 SNAPSHOT_DIR = Path.home() / ".daily-digest" / "snapshots"
 SNAPSHOT_KEEP = 14
 
@@ -85,25 +89,58 @@ def _call_anthropic(system: str, user: str, *, api_key: str, timeout: float = 12
                    if b.get("type") == "text").strip()
 
 
+def _call_hermes(prompt: str) -> str:
+    """One-shot Hermes (codex OAuth — no API spend). Stdout is the answer."""
+    r = subprocess.run([HERMES_BIN, "-z", prompt], capture_output=True,
+                       text=True, timeout=HERMES_TIMEOUT)
+    if r.returncode != 0:
+        raise RuntimeError(f"hermes exited {r.returncode}: {r.stderr[-200:]}")
+    return r.stdout.strip()
+
+
+_UNSET = object()
+
+
 # ------------------------------------------------------------------ generate
 def generate_digest(current: dict, previous: dict | None, today: date, *,
-                    call=None, api_key: str | None = None) -> str | None:
-    """LLM-written digest body, or None when the caller should fall back."""
+                    hermes=_UNSET, call=None, api_key: str | None = None) -> str | None:
+    """LLM-written digest body, or None when the caller should fall back.
+
+    Backend order: Hermes (local agent, no API spend) → Anthropic API →
+    None (caller renders the deterministic trends fallback). Any output
+    containing a digit is rejected and the next backend is tried.
+    """
+    system, user = build_prompt(current, previous, today)
+
+    def _clean(text: str | None) -> str | None:
+        if not text or re.search(r"\d", text):
+            return None
+        return text
+
+    if hermes is _UNSET:
+        hermes = _call_hermes if shutil.which(HERMES_BIN) or Path(HERMES_BIN).exists() else None
+    if hermes is not None:
+        try:
+            out = _clean(hermes(f"{system}\n\n{user}"))
+            if out:
+                return out
+            logger.warning("llm: hermes output rejected (empty or contains digits)")
+        except Exception as exc:
+            logger.warning("llm: hermes backend failed: %s", exc)
+
     api_key = os.environ.get("ANTHROPIC_API_KEY", "") if api_key is None else api_key
     if not api_key:
         return None
     if call is None:
         call = lambda s, u: _call_anthropic(s, u, api_key=api_key)
     try:
-        system, user = build_prompt(current, previous, today)
-        text = call(system, user)
+        out = _clean(call(system, user))
+        if out:
+            return out
+        logger.warning("llm: anthropic output rejected (empty or contains digits)")
     except Exception as exc:
-        logger.warning("llm: digest generation failed: %s", exc)
-        return None
-    if not text or re.search(r"\d", text):  # numbers are banned — fall back
-        logger.warning("llm: output rejected (empty or contains digits)")
-        return None
-    return text
+        logger.warning("llm: anthropic backend failed: %s", exc)
+    return None
 
 
 # ----------------------------------------------------------------- snapshots
