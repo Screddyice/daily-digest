@@ -121,7 +121,9 @@ def parse_rest_summaries(resp: dict) -> dict[str, float]:
         amounts = _walk(s, "sleepAmounts") or []
         if not day or not amounts:
             continue
-        out[day] = sum(float(a.get("duration") or 0) for a in amounts) / 60
+        total = sum(float(a.get("duration") or 0) for a in amounts) / 60
+        if total:  # 0 = the in-progress day before any rest is logged, not a real zero
+            out[day] = total
     return out
 
 
@@ -169,5 +171,8 @@ def build_section(today: date | None = None, *, env: dict | None = None,
 
     if steps_today is not None:
         update_history(history_path, "steps", today.isoformat(), steps_today)
-    series = {"steps": load_history(history_path).get("steps", {}), "sleep": sleep}
+    for day, minutes in sleep.items():  # the feed is shallow; accumulate for depth
+        update_history(history_path, "sleep", day, minutes)
+    hist = load_history(history_path)
+    series = {"steps": hist.get("steps", {}), "sleep": hist.get("sleep", {})}
     return trends.render_pet_section(pet_name, series, today)

@@ -55,6 +55,21 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(out["2026-06-12"], (28800 + 3600) / 60)
         self.assertEqual(out["2026-06-11"], 30000 / 60)
 
+    def test_parse_rest_summaries_skips_zero_total_days(self):
+        """The in-progress day reports 0s before any rest is logged — a real
+        zero-rest day is implausible for a dog, so zero means not-yet-recorded
+        and must not drag the trend down."""
+        resp = {"data": {"pet": {"restSummaryFeed": {"restSummaries": [
+            {"start": "2026-06-12T07:00:00Z",
+             "data": {"sleepAmounts": [{"type": "SLEEP", "duration": 0},
+                                       {"type": "NAP", "duration": 0}]}},
+            {"start": "2026-06-11T07:00:00Z",
+             "data": {"sleepAmounts": [{"type": "SLEEP", "duration": 30000}]}},
+        ]}}}}
+        out = bella.parse_rest_summaries(resp)
+        self.assertNotIn("2026-06-12", out)
+        self.assertIn("2026-06-11", out)
+
 
 class HistoryTests(unittest.TestCase):
     def test_history_appends_and_overwrites_per_day(self):
@@ -96,6 +111,25 @@ class BuildSectionTests(unittest.TestCase):
             self.assertIn("Sleep:", out)
             # today's live reading landed in the history file
             self.assertEqual(bella.load_history(path)["steps"][TODAY.isoformat()], 8421.0)
+
+    def test_sleep_feed_merges_into_history_for_depth(self):
+        """Fi's rest feed only returns the last few days; runs must accumulate
+        them so trends become readable after a week."""
+        responses = {"pets": PETS_RESPONSE, "steps": STEPS_RESPONSE, "rest": REST_RESPONSE}
+
+        def fake_gql(kind, **kw):
+            return responses[kind]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "hist.json"
+            # ten days of prior runs already accumulated
+            for i in range(1, 11):
+                bella.update_history(path, "sleep", f"2026-06-{i:02d}", 700.0)
+            bella.build_section(TODAY, env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
+                                history_path=path, gql=fake_gql, pet_name="Bella")
+            sleep = bella.load_history(path)["sleep"]
+            self.assertEqual(len(sleep), 12)  # 10 prior + Jun 11 + Jun 12 from the feed
+            self.assertEqual(sleep["2026-06-12"], (28800 + 3600) / 60)
 
     def test_fi_error_degrades_not_raises(self):
         def boom(kind, **kw):
