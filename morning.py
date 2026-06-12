@@ -37,11 +37,14 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=None,
     if llm_body is _UNSET:
         # Snapshot this export, compare against the previous one via the LLM.
         bella_series = bella.load_history(bella.DEFAULT_HISTORY)
+        bella_profile = bella.load_profile(bella.DEFAULT_PROFILE)
         previous = llm.load_previous_snapshot(llm.SNAPSHOT_DIR, today)
         llm.save_snapshot(llm.SNAPSHOT_DIR, today, daily_by_metric, bella_series)
-        llm_body = llm.generate_digest(
-            {"date": today.isoformat(), "you": daily_by_metric, "bella": bella_series},
-            previous, today)
+        current = {"date": today.isoformat(), "you": daily_by_metric,
+                   "bella": bella_series}
+        if bella_profile:
+            current["bella_profile"] = bella_profile
+        llm_body = llm.generate_digest(current, previous, today)
 
     header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
     if llm_body:

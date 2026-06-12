@@ -67,6 +67,40 @@ class ClassifyTrendTests(unittest.TestCase):
         self.assertFalse(trends.is_sharp_move(daily, TODAY))
 
 
+class TwoPointDirectionTests(unittest.TestCase):
+    """With only two readings (no 7-day baseline), compare latest vs previous."""
+
+    def test_two_readings_up(self):
+        daily = {"2026-06-11": 4000, "2026-06-12": 6000}
+        self.assertEqual(trends.direction(daily, TODAY), "up")
+
+    def test_two_readings_down(self):
+        daily = {"2026-06-11": 6000, "2026-06-12": 4000}
+        self.assertEqual(trends.direction(daily, TODAY), "down")
+
+    def test_two_readings_steady(self):
+        daily = {"2026-06-11": 5000, "2026-06-12": 5050}
+        self.assertEqual(trends.direction(daily, TODAY), "steady")
+
+    def test_zero_to_something_is_up(self):
+        daily = {"2026-06-11": 0, "2026-06-12": 5}   # behavior appeared today
+        self.assertEqual(trends.direction(daily, TODAY), "up")
+
+    def test_zero_to_zero_is_steady(self):
+        daily = {"2026-06-11": 0, "2026-06-12": 0}
+        self.assertEqual(trends.direction(daily, TODAY), "steady")
+
+    def test_one_reading_is_none(self):
+        self.assertIsNone(trends.direction({"2026-06-12": 5000}, TODAY))
+
+    def test_empty_is_none(self):
+        self.assertIsNone(trends.direction({}, TODAY))
+
+    def test_direction_prefers_statistical_when_baseline_exists(self):
+        daily = _flat_then(TODAY, 5000, [6500, 7000, 7500])  # 17 days, clear rise
+        self.assertEqual(trends.direction(daily, TODAY), "up")
+
+
 class StalenessTests(unittest.TestCase):
     def test_fresh_data_not_stale(self):
         daily = _series(TODAY, 17, 5000)
@@ -233,6 +267,19 @@ class BellaSectionTests(unittest.TestCase):
         out = trends.render_pet_section("Bella", series, TODAY)
         self.assertNotIn("Eating", out)
         self.assertNotIn("Barking", out)
+
+    def test_bella_two_readings_already_render_a_direction(self):
+        """Only yesterday + today — should still call a direction, not 'not enough'."""
+        series = {
+            "steps": {"2026-06-11": 6000, "2026-06-12": 9000},
+            "eating_events": {"2026-06-11": 2, "2026-06-12": 5},
+        }
+        out = trends.render_pet_section("Bella", series, TODAY)
+        act = next(l for l in out.splitlines() if "Activity" in l)
+        self.assertIn("up", act.lower())
+        self.assertNotIn("not enough", act.lower())
+        eat = next(l for l in out.splitlines() if "Eating" in l)
+        self.assertIn("more", eat.lower())
 
     def test_bella_stale_data_warns(self):
         old_end = TODAY - timedelta(days=4)

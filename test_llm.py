@@ -45,6 +45,20 @@ class PromptTests(unittest.TestCase):
         system, user = llm.build_prompt(CURRENT, None, TODAY)
         self.assertIn("no previous export", user.lower())
 
+    def test_prompt_includes_breed_age_when_profile_present(self):
+        cur = dict(CURRENT, bella_profile={
+            "name": "Bella", "breed": "Labrador Retriever", "color": "chocolate",
+            "sex": "female", "age_years": 4, "weight_lbs": 65,
+            "life_stage": "adult (prime years)"})
+        system, user = llm.build_prompt(cur, None, TODAY)
+        self.assertIn("chocolate", user.lower())
+        self.assertIn("labrador", user.lower())
+        self.assertIn("4", user)  # age — allowed in prompt context, not in output
+        # system tells the model to judge single readings against breed/age norms
+        self.assertIn("breed", system.lower())
+        self.assertTrue("single" in system.lower() or "even with" in system.lower()
+                        or "previous reading" in system.lower())
+
 
 class GenerateTests(unittest.TestCase):
     def test_returns_llm_text_when_clean(self):

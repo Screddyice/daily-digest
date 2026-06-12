@@ -22,6 +22,14 @@ PETS_RESPONSE = {
     ]}}]}}
 }
 
+PROFILE_RESPONSE = {
+    "data": {"pet": {
+        "name": "Bella", "gender": "FEMALE", "weight": 29.48348,
+        "yearOfBirth": 2022, "monthOfBirth": 5, "dayOfBirth": 10,
+        "breed": {"name": "Labrador Retriever"},
+    }}
+}
+
 STEPS_RESPONSE = {
     "data": {"pet": {"dailyStepStat": {"totalSteps": 8421, "stepGoal": 12000}}}
 }
@@ -142,6 +150,42 @@ class TrendParseTests(unittest.TestCase):
         self.assertNotIn("barking_events", bella.parse_health_trends(resp))
 
 
+class ProfileTests(unittest.TestCase):
+    def test_profile_computes_age_breed_weight(self):
+        p = bella.parse_profile(PROFILE_RESPONSE, TODAY)
+        self.assertEqual(p["name"], "Bella")
+        self.assertEqual(p["breed"], "Labrador Retriever")
+        self.assertEqual(p["sex"], "female")
+        self.assertEqual(p["age_years"], 4)            # born 2022-05-10, today 2026-06-12
+        self.assertEqual(p["weight_lbs"], 65)          # 29.48 kg
+        self.assertIn("adult", p["life_stage"])
+
+    def test_profile_color_defaults_to_chocolate(self):
+        p = bella.parse_profile(PROFILE_RESPONSE, TODAY)
+        self.assertEqual(p["color"], "chocolate")
+
+    def test_profile_color_env_override(self):
+        p = bella.parse_profile(PROFILE_RESPONSE, TODAY, color="black")
+        self.assertEqual(p["color"], "black")
+
+    def test_life_stage_senior_for_old_lab(self):
+        old = {"data": {"pet": {"name": "Bella", "gender": "FEMALE", "weight": 29.0,
+               "yearOfBirth": 2017, "monthOfBirth": 1, "dayOfBirth": 1,
+               "breed": {"name": "Labrador Retriever"}}}}
+        self.assertIn("senior", bella.parse_profile(old, TODAY)["life_stage"])
+
+    def test_profile_save_and_load_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "profile.json"
+            p = bella.parse_profile(PROFILE_RESPONSE, TODAY)
+            bella.save_profile(path, p)
+            self.assertEqual(bella.load_profile(path)["age_years"], 4)
+
+    def test_load_profile_missing_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(bella.load_profile(Path(tmp) / "nope.json"))
+
+
 class HistoryTests(unittest.TestCase):
     def test_history_appends_and_overwrites_per_day(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -165,19 +209,23 @@ class BuildSectionTests(unittest.TestCase):
 
     def test_build_section_with_injected_gql(self):
         responses = {"pets": PETS_RESPONSE, "steps": STEPS_RESPONSE,
-                     "rest": REST_RESPONSE, "trends": TRENDS_RESPONSE}
+                     "rest": REST_RESPONSE, "trends": TRENDS_RESPONSE,
+                     "profile": PROFILE_RESPONSE}
 
         def fake_gql(kind, **kw):
             return responses[kind]
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "hist.json"
+            prof = Path(tmp) / "prof.json"
             # seed enough history that a trend is readable
             for i in range(17):
                 d = date(2026, 5, 26 + i) if 26 + i <= 31 else date(2026, 6, 26 + i - 31)
                 bella.update_history(path, "steps", d.isoformat(), 8000.0)
             out = bella.build_section(TODAY, env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
-                                      history_path=path, gql=fake_gql, pet_name="Bella")
+                                      history_path=path, profile_path=prof,
+                                      gql=fake_gql, pet_name="Bella")
+            self.assertEqual(bella.load_profile(prof)["age_years"], 4)
             self.assertIn("🐕 Bella", out)
             self.assertIn("Activity:", out)
             self.assertIn("Sleep:", out)
