@@ -59,6 +59,34 @@ def is_sharp_move(daily: dict[str, float], today: date) -> bool:
     return move is not None and abs(move) > SHARP_THRESHOLD
 
 
+def two_point_direction(daily: dict[str, float]) -> str | None:
+    """Latest vs the immediately-previous reading. The fallback when there
+    isn't enough history for a statistical trend — gives a usable direction
+    from just two days instead of waiting a week."""
+    days = sorted(daily)
+    if len(days) < 2:
+        return None
+    prev, last = daily[days[-2]], daily[days[-1]]
+    if prev == 0:
+        return "up" if last > 0 else "steady"
+    move = (last - prev) / prev
+    if move > TREND_THRESHOLD:
+        return "up"
+    if move < -TREND_THRESHOLD:
+        return "down"
+    return "steady"
+
+
+def direction(daily: dict[str, float], today: date) -> str | None:
+    """Best available read: a statistical trend when there's baseline depth,
+    otherwise a simple previous-vs-latest comparison. None only when there's
+    fewer than two readings."""
+    t = classify_trend(daily, today)
+    if t is not None:
+        return t
+    return two_point_direction(daily)
+
+
 def staleness_days(daily_by_metric: dict[str, dict[str, float]], today: date) -> int | None:
     """Days since the newest datapoint across all metrics; None if no data."""
     newest = max((max(d) for d in daily_by_metric.values() if d), default=None)
@@ -86,7 +114,7 @@ def _stale_warning(noun: str, daily_by_metric: dict, today: date) -> str | None:
 def _activity_line(d: dict[str, dict[str, float]], today: date) -> str:
     directions = [
         t for m in ("step_count", "active_energy", "apple_exercise_time")
-        if (t := classify_trend(d.get(m, {}), today)) is not None
+        if (t := direction(d.get(m, {}), today)) is not None
     ]
     if not directions:
         return "• Activity & exercise: no recent movement data."
@@ -106,7 +134,7 @@ def _lungs_line(d: dict[str, dict[str, float]], today: date) -> tuple[str, bool]
     rm = _recent_mean(spo2)
     if rm is not None and rm < SPO2_NORMAL_FLOOR:
         return "• Lungs: blood oxygen below your normal range — keep an eye on it.", True
-    t = classify_trend(spo2, today)
+    t = direction(spo2, today)
     if t == "down":
         return "• Lungs: blood oxygen drifting lower, still in the normal range.", False
     return "• Lungs: blood oxygen steady, in your normal range.", False
@@ -115,8 +143,8 @@ def _lungs_line(d: dict[str, dict[str, float]], today: date) -> tuple[str, bool]
 def _stress_signals(d: dict[str, dict[str, float]], today: date) -> tuple[bool, bool]:
     """(hrv_down, rhr_up) — the two strain markers."""
     return (
-        classify_trend(d.get("heart_rate_variability", {}), today) == "down",
-        classify_trend(d.get("resting_heart_rate", {}), today) == "up",
+        direction(d.get("heart_rate_variability", {}), today) == "down",
+        direction(d.get("resting_heart_rate", {}), today) == "up",
     )
 
 
@@ -137,7 +165,7 @@ def _sleep_line(d: dict[str, dict[str, float]], today: date) -> str:
     nights = sum(1 for day in sleep if day >= cutoff)
     if nights < MIN_NIGHTS_PER_WEEK:
         return "• Sleep: patchy — watch off most nights, not enough to read a trend."
-    t = classify_trend(sleep, today)
+    t = direction(sleep, today)
     if t == "down":
         return "• Sleep: running short — most nights below your usual."
     if t == "up":
@@ -189,7 +217,7 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
     if warning:
         L += [warning, ""]
     steps = series.get("steps", {})
-    t = classify_trend(steps, today)
+    t = direction(steps, today)
     if not steps:
         L.append("• Activity: no recent movement data from the collar.")
     else:
@@ -201,7 +229,7 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
         }[t])
     sleep = series.get("sleep", {})
     if sleep:
-        t = classify_trend(sleep, today)
+        t = direction(sleep, today)
         L.append({
             "up": "• Sleep: resting more than usual the past few days.",
             "down": "• Sleep: resting less than usual — could mean restlessness.",
@@ -214,7 +242,7 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
         d = series.get(key, {})
         if not d:
             continue
-        t = classify_trend(d, today)
+        t = direction(d, today)
         if t is None:
             continue
         L.append({"up": f"• {label}: {up}", "down": f"• {label}: {down}",

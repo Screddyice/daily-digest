@@ -31,10 +31,19 @@ logger = logging.getLogger(__name__)
 
 FI_API = "https://api.tryfi.com"
 DEFAULT_HISTORY = Path.home() / ".daily-digest" / "bella_history.json"
+DEFAULT_PROFILE = Path.home() / ".daily-digest" / "bella_profile.json"
 HISTORY_KEEP_DAYS = 60
+# Fi doesn't expose coat color; Shawn's Bella is a chocolate Lab.
+DEFAULT_COLOR = os.environ.get("FI_PET_COLOR", "chocolate")
 
 PETS_QUERY = """query {
   currentUser { userHouseholds { household { pets { id name } } } }
+}"""
+PROFILE_QUERY = """query {
+  pet (id: "%s") {
+    name gender weight yearOfBirth monthOfBirth dayOfBirth
+    breed { name }
+  }
 }"""
 STEPS_QUERY = """query {
   pet (id: "%s") {
@@ -105,6 +114,7 @@ def make_gql(email: str, password: str, timeout: float = 30.0):
         else:
             query = {
                 "pets": PETS_QUERY,
+                "profile": PROFILE_QUERY % pet_id,
                 "steps": STEPS_QUERY % pet_id,
                 "rest": REST_QUERY % pet_id,
             }[kind]
@@ -142,6 +152,52 @@ def find_pet_id(resp: dict, name: str) -> str | None:
         if (p.get("name") or "").lower() == name.lower():
             return p.get("id")
     return None
+
+
+def _life_stage(breed: str, age_years: float) -> str:
+    """Large-breed life stage (Labs hit senior earlier than small dogs)."""
+    if age_years < 1:
+        return "puppy"
+    if age_years < 2:
+        return "young adult"
+    if age_years < 7:
+        return "adult (prime years)"
+    return "senior"
+
+
+def parse_profile(resp: dict, today: date, *, color: str | None = None) -> dict:
+    """Breed/age/weight context used to judge a single reading against what's
+    normal for this dog — even before there's any trend history."""
+    p = _walk(resp, "pet") if "pet" not in resp else resp["pet"]
+    p = p or (resp.get("data", {}) or {}).get("pet", {}) or {}
+    y, m, d = p.get("yearOfBirth"), p.get("monthOfBirth") or 1, p.get("dayOfBirth") or 1
+    age_years = None
+    if y:
+        born = date(y, m, d)
+        age_years = (today - born).days // 365
+    kg = p.get("weight")
+    breed = (p.get("breed") or {}).get("name", "dog")
+    return {
+        "name": p.get("name", "Bella"),
+        "breed": breed,
+        "color": color or DEFAULT_COLOR,
+        "sex": (p.get("gender") or "").lower() or "unknown",
+        "age_years": age_years,
+        "weight_lbs": round(kg * 2.20462) if kg else None,
+        "life_stage": _life_stage(breed, age_years) if age_years is not None else "unknown",
+    }
+
+
+def save_profile(path: Path, profile: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(profile, sort_keys=True))
+
+
+def load_profile(path: Path = DEFAULT_PROFILE) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def parse_daily_steps(resp: dict) -> float | None:
@@ -227,7 +283,8 @@ def update_history(path: Path, metric: str, day: str, value: float) -> None:
 
 # ---------------------------------------------------------------- composition
 def build_section(today: date | None = None, *, env: dict | None = None,
-                  history_path: Path = DEFAULT_HISTORY, gql=None,
+                  history_path: Path = DEFAULT_HISTORY,
+                  profile_path: Path = DEFAULT_PROFILE, gql=None,
                   pet_name: str | None = None) -> str:
     today = today or date.today()
     env = os.environ if env is None else env
@@ -250,6 +307,10 @@ def build_section(today: date | None = None, *, env: dict | None = None,
         except Exception as exc:  # behaviors are newer/less stable — don't sink the rest
             logger.warning("bella: behavior-trends fetch failed: %s", exc)
             behaviors_today = {}
+        try:
+            save_profile(profile_path, parse_profile(gql("profile", pet_id=pet_id), today))
+        except Exception as exc:
+            logger.warning("bella: profile fetch failed: %s", exc)
     except Exception as exc:  # Bella's section must never sink the digest
         logger.warning("bella: fi fetch failed: %s", exc)
         return f"🐕 {pet_name}\n\nFi unavailable right now — couldn't reach the collar data."

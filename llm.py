@@ -52,13 +52,52 @@ section with bullets for her activity and rest.
 affected section with a "⚠️" line saying the data hasn't synced and since \
 roughly when (in words, never a date with digits).
 - Be direct and human. Say what matters and stop. If nothing is notable, say \
-things look steady rather than inventing concern."""
+things look steady rather than inventing concern.
+
+Comparison and judgment:
+- You usually only have the PREVIOUS export and the CURRENT one. That is \
+enough — compare the latest reading to the previous reading and call a \
+direction. You do NOT need a week of history or a confirmed pattern; a \
+single-day change is worth reporting.
+- For Bella, you are given her breed, color, age, and life stage. Use what is \
+normal for a healthy dog of that breed and age to judge a single reading, even \
+with no history. For example, for an adult Labrador in her prime, weigh whether \
+today's activity, eating, drinking, licking, scratching, and rest look normal, \
+low, or worth watching for a dog like her. Flag anything that looks off for her \
+breed and age (excess drinking, appetite drop, a scratching or licking spike \
+that can mean skin or allergy trouble), but stay calm and factual — you are \
+giving Shawn a heads-up, not a diagnosis. Still no numbers in the output."""
 
 
 # -------------------------------------------------------------------- prompt
+def _profile_line(profile: dict | None) -> str | None:
+    if not profile:
+        return None
+    bits = [profile.get("color"), profile.get("breed")]
+    desc = " ".join(b for b in bits if b)
+    age = profile.get("age_years")
+    stage = profile.get("life_stage")
+    sex = profile.get("sex")
+    wt = profile.get("weight_lbs")
+    extra = []
+    if sex and sex != "unknown":
+        extra.append(sex)
+    if age is not None:
+        extra.append(f"{age} years old")
+    if stage and stage != "unknown":
+        extra.append(stage)
+    if wt:
+        extra.append(f"around {wt} lbs")
+    return f"Bella is a {desc} ({', '.join(extra)})." if extra else f"Bella is a {desc}."
+
+
 def build_prompt(current: dict, previous: dict | None, today: date) -> tuple[str, str]:
-    parts = [f"Today is {today:%A, %B} (year and day intentionally withheld).",
-             "CURRENT export:", json.dumps(current, sort_keys=True)]
+    parts = [f"Today is {today:%A, %B} (year and day intentionally withheld)."]
+    pline = _profile_line(current.get("bella_profile"))
+    if pline:
+        parts += [pline + " Use what is typical for a dog like her to judge "
+                  "her readings."]
+    parts += ["CURRENT export:", json.dumps(current, sort_keys=True)]
     if previous:
         parts += ["PREVIOUS export:", json.dumps(previous, sort_keys=True)]
     else:
