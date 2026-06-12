@@ -354,11 +354,10 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     return "\n".join(L)
 
 
-def build_section(today: date | None = None, *,
-                  fetch: Callable = fetch_metric,
-                  config: Callable[[], tuple[str, str]] = load_hae_config) -> str:
-    """Fetch live values from HAE and render the section. Resilient per-metric."""
-    today = today or datetime.now(timezone.utc).date()
+def fetch_daily_by_metric(*, fetch: Callable = fetch_metric,
+                          config: Callable[[], tuple[str, str]] = load_hae_config,
+                          ) -> dict[str, dict[str, float]]:
+    """Fetch live values from HAE for every digest metric. Resilient per-metric."""
     base, token = config()
     wanted = (
         ("step_count", "sum"),
@@ -377,7 +376,15 @@ def build_section(today: date | None = None, *,
         except Exception as exc:  # one bad metric must not sink the whole digest
             logger.warning("health: fetch failed for %s: %s", metric, exc)
             daily_by_metric[metric] = {}
-    return render_section(daily_by_metric, today)
+    return daily_by_metric
+
+
+def build_section(today: date | None = None, *,
+                  fetch: Callable = fetch_metric,
+                  config: Callable[[], tuple[str, str]] = load_hae_config) -> str:
+    """Fetch live values from HAE and render the (legacy, numeric) section."""
+    today = today or datetime.now(timezone.utc).date()
+    return render_section(fetch_daily_by_metric(fetch=fetch, config=config), today)
 
 
 def main() -> int:
