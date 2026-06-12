@@ -27,19 +27,31 @@ def _you_data(end: date = TODAY) -> dict:
     }
 
 
+MEETINGS = "📅 Meetings\n\n9:00 AM — Rivus sync\n  • With Andres"
+
+
 class BuildDigestTests(unittest.TestCase):
-    def test_digest_is_you_plus_bella_only(self):
+    def test_digest_is_you_bella_then_meetings_last(self):
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
-                                   bella_section="🐕 Bella\n\n• Activity: steady.")
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   meetings_section=MEETINGS)
         self.assertIn("Morning Digest", out)
         self.assertIn("💪 You", out)
         self.assertIn("🐕 Bella", out)
+        self.assertTrue(out.index("📅 Meetings") > out.index("🐕 Bella"))
+        self.assertIn("9:00 AM — Rivus sync", out)
+
+    def test_empty_meetings_section_is_omitted(self):
+        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   meetings_section="")
         self.assertNotIn("Meetings", out)
         self.assertNotIn("📅", out)
 
-    def test_no_numbers_outside_the_date_header(self):
+    def test_no_numbers_outside_date_header_and_meetings(self):
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
-                                   bella_section="🐕 Bella\n\n• Activity: steady.")
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   meetings_section="")
         body = "\n".join(l for l in out.splitlines()
                          if "Morning Digest" not in l and not l.startswith("💪"))
         self.assertNotRegex(body, r"\d")
@@ -48,17 +60,19 @@ class BuildDigestTests(unittest.TestCase):
         llm_body = "💪 You\n\n• Activity: trending down.\n\n🐕 Bella\n\n• Activity: steady."
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
                                    bella_section="🐕 Bella (fallback)",
-                                   llm_body=llm_body)
+                                   llm_body=llm_body, meetings_section=MEETINGS)
         self.assertIn("Morning Digest", out)
         self.assertIn("• Activity: trending down.", out)
         self.assertNotIn("(fallback)", out)
+        self.assertTrue(out.rstrip().endswith("• With Andres"))
 
     def test_falls_back_to_deterministic_when_llm_body_none(self):
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
-                                   llm_body=None)
+                                   llm_body=None, meetings_section=MEETINGS)
         self.assertIn("💪 You", out)
         self.assertIn("🐕 Bella", out)
+        self.assertIn("📅 Meetings", out)
 
 
 class AlertWiringTests(unittest.TestCase):
