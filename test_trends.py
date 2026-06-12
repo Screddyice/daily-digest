@@ -268,6 +268,22 @@ class BellaSectionTests(unittest.TestCase):
         self.assertNotIn("Eating", out)
         self.assertNotIn("Barking", out)
 
+    def test_bella_behavior_with_single_reading_says_baseline_building(self):
+        """Day one of behavior tracking: one reading can't give a direction,
+        but the line must not vanish — say the baseline is still building."""
+        series = {
+            "steps": _series(TODAY, 17, 8000),
+            "eating_events": {TODAY.isoformat(): 3},
+            "licking_events": {TODAY.isoformat(): 5},
+        }
+        out = trends.render_pet_section("Bella", series, TODAY)
+        eat = next(l for l in out.splitlines() if "Eating" in l)
+        self.assertIn("baseline", eat.lower())
+        lick = next(l for l in out.splitlines() if "Licking" in l)
+        self.assertIn("baseline", lick.lower())
+        body = "\n".join(l for l in out.splitlines() if "Bella" not in l)
+        self.assertNotRegex(body, r"\d")
+
     def test_bella_two_readings_already_render_a_direction(self):
         """Only yesterday + today — should still call a direction, not 'not enough'."""
         series = {
