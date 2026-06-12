@@ -243,7 +243,8 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
         if not d:
             continue
         t = direction(d, today)
-        if t is None:
+        if t is None:  # first reading — tracked, just nothing to compare against yet
+            L.append(f"• {label}: tracking started — baseline building.")
             continue
         L.append({"up": f"• {label}: {up}", "down": f"• {label}: {down}",
                   "steady": f"• {label}: {steady}"}[t])
