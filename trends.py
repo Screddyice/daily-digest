@@ -1,9 +1,12 @@
-"""Trends-only digest sections — directions, never numbers.
+"""Trends-only digest sections — directions, never numbers (one exception).
 
 The digest's job is one sentence per signal: is it going up, down, or holding
 steady, and does any combination hint at stress, sleep debt, or oncoming
-illness. Raw values stay out of the rendering entirely (the date header is the
-only place a digit may appear).
+illness. Raw values stay out of the rendering (the date header is one place a
+digit may appear). The deliberate exception, by Shawn's request: Bella's
+Series 3 behavior lines (eating / drinking / scratching / licking / barking)
+show her actual event count alongside the direction. Her activity (steps) and
+rest stay numberless like everything else.
 
 Works on the same `{metric: {iso_day: value}}` shape that health.aggregate_daily
 produces, so it plugs into the existing HAE fetch path and the Fi (pet) fetch
@@ -237,18 +240,26 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
             None: "• Sleep: not enough history yet to read a trend.",
         }[t])
 
-    # ---- Series 3+ AI behaviors (direction only, health-flavored phrasing) ----
+    # ---- Series 3+ AI behaviors: real event count + health-flavored direction ----
     for key, label, up, down, steady in PET_BEHAVIORS:
         d = series.get(key, {})
         if not d:
             continue
+        count = _event_count(d)
         t = direction(d, today)
         if t is None:  # first reading — tracked, just nothing to compare against yet
-            L.append(f"• {label}: tracking started — baseline building.")
+            L.append(f"• {label}: {count} today — tracking started, baseline building.")
             continue
-        L.append({"up": f"• {label}: {up}", "down": f"• {label}: {down}",
-                  "steady": f"• {label}: {steady}"}[t])
+        phrasing = {"up": up, "down": down, "steady": steady}[t]
+        L.append(f"• {label}: {count} today, {phrasing}")
     return "\n".join(L)
+
+
+def _event_count(daily: dict[str, float]) -> str:
+    """Bella's most recent behavior reading as 'N event(s)' — the one place
+    numbers are allowed in a pet section, per Shawn's request."""
+    n = int(round(daily[sorted(daily)[-1]]))
+    return f"{n:,} event" + ("" if n == 1 else "s")
 
 
 # (series key, label, up phrasing, down phrasing, steady phrasing) — health-aware.

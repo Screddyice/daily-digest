@@ -39,23 +39,20 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=None,
 
     if llm_body is _UNSET:
         # Snapshot this export, compare against the previous one via the LLM.
+        # The LLM writes ONLY the numberless "You" narrative; Bella's section is
+        # rendered deterministically below so her real numbers survive the
+        # digit-gate (which now governs the You body alone).
         bella_series = bella.load_history(bella.DEFAULT_HISTORY)
-        bella_profile = bella.load_profile(bella.DEFAULT_PROFILE)
         previous = llm.load_previous_snapshot(llm.SNAPSHOT_DIR, today)
         llm.save_snapshot(llm.SNAPSHOT_DIR, today, daily_by_metric, bella_series)
-        current = {"date": today.isoformat(), "you": daily_by_metric,
-                   "bella": bella_series}
-        if bella_profile:
-            current["bella_profile"] = bella_profile
+        current = {"date": today.isoformat(), "you": daily_by_metric}
         llm_body = llm.generate_digest(current, previous, today)
 
     header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
-    if llm_body:
-        blocks = [header, "", llm_body]
-    else:
-        # deterministic fallback — guaranteed numberless
-        blocks = [header, "", trends.render_you_section(daily_by_metric, today),
-                  "", bella_section]
+    # You section: LLM narrative when available, else the deterministic
+    # numberless renderer. Bella's numeric section is always appended.
+    you_block = llm_body or trends.render_you_section(daily_by_metric, today)
+    blocks = [header, "", you_block, "", bella_section]
     if meetings_section:  # always last; times are the one allowed digit zone
         blocks += ["", meetings_section]
     return "\n".join(blocks)

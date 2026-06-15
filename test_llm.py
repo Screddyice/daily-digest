@@ -33,31 +33,23 @@ GOOD_OUTPUT = """💪 You
 
 
 class PromptTests(unittest.TestCase):
-    def test_prompt_includes_both_exports_and_rules(self):
+    def test_prompt_is_you_only_with_rules_and_exports(self):
+        """The LLM now writes only the numberless You section; Bella's section
+        is rendered deterministically (with numbers) outside the LLM path, so
+        Bella data must not be in the prompt."""
         system, user = llm.build_prompt(CURRENT, PREVIOUS, TODAY)
         self.assertIn("never", system.lower())
         self.assertIn("number", system.lower())
-        self.assertIn("Bella", system)
-        self.assertIn("2026-06-12", user)   # current export data
-        self.assertIn("2026-06-11", user)   # previous export data
+        self.assertIn("💪 You", system)            # the one section it writes
+        # Bella is named only to tell the model NOT to write her section.
+        self.assertRegex(system.lower(), r"do not write|rendered separately")
+        self.assertIn("2026-06-12", user)          # current export data
+        self.assertIn("2026-06-11", user)          # previous export data
+        self.assertNotIn("8000", user)             # Bella's data dropped from prompt
 
     def test_prompt_handles_missing_previous(self):
         system, user = llm.build_prompt(CURRENT, None, TODAY)
         self.assertIn("no previous export", user.lower())
-
-    def test_prompt_includes_breed_age_when_profile_present(self):
-        cur = dict(CURRENT, bella_profile={
-            "name": "Bella", "breed": "Labrador Retriever", "color": "chocolate",
-            "sex": "female", "age_years": 4, "weight_lbs": 65,
-            "life_stage": "adult (prime years)"})
-        system, user = llm.build_prompt(cur, None, TODAY)
-        self.assertIn("chocolate", user.lower())
-        self.assertIn("labrador", user.lower())
-        self.assertIn("4", user)  # age — allowed in prompt context, not in output
-        # system tells the model to judge single readings against breed/age norms
-        self.assertIn("breed", system.lower())
-        self.assertTrue("single" in system.lower() or "even with" in system.lower()
-                        or "previous reading" in system.lower())
 
 
 class GenerateTests(unittest.TestCase):

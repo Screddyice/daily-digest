@@ -32,25 +32,24 @@ HERMES_TIMEOUT = 300
 SNAPSHOT_DIR = Path.home() / ".daily-digest" / "snapshots"
 SNAPSHOT_KEEP = 14
 
-SYSTEM = """You write Shawn's private morning health digest. You are given two \
-data exports: the previous one and the current one (Apple Health metrics for \
-Shawn, Fi collar data for his dog Bella). Compare them and report ONLY trends \
-and what they hint at.
+SYSTEM = """You write the "💪 You" section of Shawn's private morning health \
+digest. You are given two data exports: the previous one and the current one \
+(Apple Health metrics for Shawn). Compare them and report ONLY trends and what \
+they hint at. Bella's section is rendered separately — do not write it.
 
 Hard rules:
 - NEVER include any number, digit, percentage, or unit. Not even counts like \
-"3 days" — say "a few days". The digest must contain zero numerals.
+"3 days" — say "a few days". This section must contain zero numerals.
 - Every line states a direction (increasing / decreasing / steady) or a \
 plain-English conclusion, never a value.
-- Two sections, exactly this shape: a "💪 You" section with one short bullet \
+- One section, exactly this shape: a "💪 You" section with one short bullet \
 each for: activity & exercise, lungs (blood oxygen), stress signals (recovery \
 markers like HRV and resting heart rate), sleep (enough or not), and an \
-illness watch (combinations hinting he's getting sick). Then a "🐕 Bella" \
-section with bullets for her activity and rest.
+illness watch (combinations hinting he's getting sick).
 - Bullets start with "• ". No markdown headers, no bold, no tables.
 - If the current export's data is stale or missing for a stretch, open the \
-affected section with a "⚠️" line saying the data hasn't synced and since \
-roughly when (in words, never a date with digits).
+section with a "⚠️" line saying the data hasn't synced and since roughly when \
+(in words, never a date with digits).
 - Be direct and human. Say what matters and stop. If nothing is notable, say \
 things look steady rather than inventing concern.
 
@@ -58,52 +57,27 @@ Comparison and judgment:
 - You usually only have the PREVIOUS export and the CURRENT one. That is \
 enough — compare the latest reading to the previous reading and call a \
 direction. You do NOT need a week of history or a confirmed pattern; a \
-single-day change is worth reporting.
-- For Bella, you are given her breed, color, age, and life stage. Use what is \
-normal for a healthy dog of that breed and age to judge a single reading, even \
-with no history. For example, for an adult Labrador in her prime, weigh whether \
-today's activity, eating, drinking, licking, scratching, and rest look normal, \
-low, or worth watching for a dog like her. Flag anything that looks off for her \
-breed and age (excess drinking, appetite drop, a scratching or licking spike \
-that can mean skin or allergy trouble), but stay calm and factual — you are \
-giving Shawn a heads-up, not a diagnosis. Still no numbers in the output."""
+single-day change is worth reporting."""
 
 
 # -------------------------------------------------------------------- prompt
-def _profile_line(profile: dict | None) -> str | None:
-    if not profile:
+def _you_only(export: dict | None) -> dict | None:
+    """Strip a snapshot down to the You data — Bella is rendered outside the
+    LLM path now, so her data never enters the prompt."""
+    if not export:
         return None
-    bits = [profile.get("color"), profile.get("breed")]
-    desc = " ".join(b for b in bits if b)
-    age = profile.get("age_years")
-    stage = profile.get("life_stage")
-    sex = profile.get("sex")
-    wt = profile.get("weight_lbs")
-    extra = []
-    if sex and sex != "unknown":
-        extra.append(sex)
-    if age is not None:
-        extra.append(f"{age} years old")
-    if stage and stage != "unknown":
-        extra.append(stage)
-    if wt:
-        extra.append(f"around {wt} lbs")
-    return f"Bella is a {desc} ({', '.join(extra)})." if extra else f"Bella is a {desc}."
+    return {"date": export.get("date"), "you": export.get("you")}
 
 
 def build_prompt(current: dict, previous: dict | None, today: date) -> tuple[str, str]:
     parts = [f"Today is {today:%A, %B} (year and day intentionally withheld)."]
-    pline = _profile_line(current.get("bella_profile"))
-    if pline:
-        parts += [pline + " Use what is typical for a dog like her to judge "
-                  "her readings."]
-    parts += ["CURRENT export:", json.dumps(current, sort_keys=True)]
+    parts += ["CURRENT export:", json.dumps(_you_only(current), sort_keys=True)]
     if previous:
-        parts += ["PREVIOUS export:", json.dumps(previous, sort_keys=True)]
+        parts += ["PREVIOUS export:", json.dumps(_you_only(previous), sort_keys=True)]
     else:
         parts.append("There is no previous export yet — describe today's data "
                      "qualitatively and note trends will start tomorrow.")
-    parts.append("Write the digest body now (the two sections only, no date header).")
+    parts.append("Write the You section now (that section only, no date header).")
     return SYSTEM, "\n\n".join(parts)
 
 
