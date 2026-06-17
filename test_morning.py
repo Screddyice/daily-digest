@@ -48,22 +48,33 @@ class BuildDigestTests(unittest.TestCase):
         self.assertNotIn("Meetings", out)
         self.assertNotIn("📅", out)
 
-    def test_no_numbers_outside_date_header_and_meetings(self):
-        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
-                                   bella_section="🐕 Bella\n\n• Activity: steady.",
-                                   meetings_section="")
-        body = "\n".join(l for l in out.splitlines()
-                         if "Morning Digest" not in l and not l.startswith("💪"))
-        self.assertNotRegex(body, r"\d")
+    def test_you_section_stays_numberless_while_bella_may_carry_numbers(self):
+        """The LLM-written (or deterministic) You section is numberless; Bella's
+        section is allowed real numbers — they must survive into the digest."""
+        out = morning.build_digest(
+            TODAY, daily_by_metric=_you_data(),
+            bella_section="🐕 Bella\n\n• Drinking: 14 events today, drinking about as usual.",
+            llm_body=None, meetings_section="")
+        lines = out.splitlines()
+        you_idx = next(i for i, l in enumerate(lines) if l.startswith("💪"))
+        bella_idx = next(i for i, l in enumerate(lines) if l.startswith("🐕"))
+        you_body = "\n".join(lines[you_idx + 1:bella_idx])
+        self.assertNotRegex(you_body, r"\d")     # You section: no numbers
+        self.assertIn("14 events", out)          # Bella's numbers survive
 
-    def test_llm_body_used_verbatim_when_provided(self):
-        llm_body = "💪 You\n\n• Activity: trending down.\n\n🐕 Bella\n\n• Activity: steady."
-        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
-                                   bella_section="🐕 Bella (fallback)",
-                                   llm_body=llm_body, meetings_section=MEETINGS)
+    def test_llm_writes_you_and_bella_section_is_appended_with_numbers(self):
+        """The LLM body is only the You narrative; Bella's numeric section is
+        always appended deterministically so her real numbers reach the digest."""
+        llm_body = "💪 You\n\n• Activity: trending down."
+        out = morning.build_digest(
+            TODAY, daily_by_metric=_you_data(),
+            bella_section="🐕 Bella\n\n• Drinking: 14 events today, drinking about as usual.",
+            llm_body=llm_body, meetings_section=MEETINGS)
         self.assertIn("Morning Digest", out)
-        self.assertIn("• Activity: trending down.", out)
-        self.assertNotIn("(fallback)", out)
+        self.assertIn("• Activity: trending down.", out)   # You narrative verbatim
+        self.assertIn("🐕 Bella", out)                      # Bella appended
+        self.assertIn("14 events", out)                     # numbers survive
+        self.assertTrue(out.index("🐕 Bella") > out.index("💪 You"))
         self.assertTrue(out.rstrip().endswith("• With Andres"))
 
     def test_falls_back_to_deterministic_when_llm_body_none(self):

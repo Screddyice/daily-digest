@@ -242,7 +242,9 @@ class BellaSectionTests(unittest.TestCase):
         self.assertIn("Bella", out)
         self.assertIn("no", out.lower())
 
-    def test_bella_behaviors_rendered_with_direction_no_numbers(self):
+    def test_bella_behaviors_render_with_event_counts_and_direction(self):
+        """Behavior events show Bella's real counts alongside the direction;
+        steps/sleep stay numberless (Shawn only wanted numbers on behaviors)."""
         series = {
             "steps": _series(TODAY, 17, 8000),
             "sleep": _series(TODAY, 17, 700.0),
@@ -253,14 +255,20 @@ class BellaSectionTests(unittest.TestCase):
             "barking_events": _series(TODAY, 17, 1),
         }
         out = trends.render_pet_section("Bella", series, TODAY)
-        body = "\n".join(l for l in out.splitlines() if "Bella" not in l)
-        self.assertNotRegex(body, r"\d")
-        low = out.lower()
-        self.assertIn("eating", low)
-        self.assertIn("drinking", low)
-        self.assertIn("scratching", low)
         eat = next(l for l in out.splitlines() if "Eating" in l)
-        self.assertIn("more", eat.lower())
+        self.assertIn("7 event", eat)          # latest reading as a real count
+        self.assertIn("more", eat.lower())     # direction wording kept alongside
+        drink = next(l for l in out.splitlines() if "Drinking" in l)
+        self.assertIn("5 event", drink)
+        self.assertIn("usual", drink.lower())
+        bark = next(l for l in out.splitlines() if "Barking" in l)
+        self.assertIn("1 event", bark)         # singular, not "1 events"
+        self.assertNotIn("1 events", bark)
+        # steps & sleep were NOT selected for numbers — they stay direction-only
+        act = next(l for l in out.splitlines() if "Activity" in l)
+        self.assertNotRegex(act, r"\d")
+        sleep = next(l for l in out.splitlines() if "Sleep" in l)
+        self.assertNotRegex(sleep, r"\d")
 
     def test_bella_behavior_absent_is_skipped_not_faked(self):
         series = {"steps": _series(TODAY, 17, 8000), "sleep": _series(TODAY, 17, 700.0)}
@@ -268,9 +276,10 @@ class BellaSectionTests(unittest.TestCase):
         self.assertNotIn("Eating", out)
         self.assertNotIn("Barking", out)
 
-    def test_bella_behavior_with_single_reading_says_baseline_building(self):
+    def test_bella_behavior_with_single_reading_shows_count_and_baseline(self):
         """Day one of behavior tracking: one reading can't give a direction,
-        but the line must not vanish — say the baseline is still building."""
+        but the line must not vanish — show today's count and say the baseline
+        is still building."""
         series = {
             "steps": _series(TODAY, 17, 8000),
             "eating_events": {TODAY.isoformat(): 3},
@@ -279,10 +288,13 @@ class BellaSectionTests(unittest.TestCase):
         out = trends.render_pet_section("Bella", series, TODAY)
         eat = next(l for l in out.splitlines() if "Eating" in l)
         self.assertIn("baseline", eat.lower())
+        self.assertIn("3 event", eat)          # count shown even on day one
         lick = next(l for l in out.splitlines() if "Licking" in l)
         self.assertIn("baseline", lick.lower())
-        body = "\n".join(l for l in out.splitlines() if "Bella" not in l)
-        self.assertNotRegex(body, r"\d")
+        self.assertIn("5 event", lick)
+        # steps (not selected for numbers) stays numberless
+        act = next(l for l in out.splitlines() if "Activity" in l)
+        self.assertNotRegex(act, r"\d")
 
     def test_bella_two_readings_already_render_a_direction(self):
         """Only yesterday + today — should still call a direction, not 'not enough'."""
