@@ -22,7 +22,7 @@ import os
 import re
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import morning
@@ -55,6 +55,14 @@ MEETING_FETCH_LIMIT = 40          # how many recent meetings to scan for "today"
 CALLS_MAX = 6                     # cap calls shown; the rest collapse to "+N more"
 SUMMARY_MAX_CHARS = 150           # one tight clause per call — the retro leads with actions, not recaps
 NEXT_MAX_CHARS = 220
+
+# Morning "Still pending" section — open to-dos carried forward from the last few
+# days of calls (the retro shows them end-of-day; the morning digest reminds you
+# they're still open). Shawn-owned items lead.
+PENDING_LOOKBACK_DAYS = int(os.environ.get("PENDING_LOOKBACK_DAYS", "3"))
+PENDING_MAX_ITEMS = 8
+PENDING_ITEM_MAX_CHARS = 140      # tighter than the retro's Next: line — this is a reminder
+_SHAWN = re.compile(r"\bshawn\b", re.IGNORECASE)
 
 # Internal domains — attendees here don't make a meeting an external "call",
 # and aren't named in the "with" line.
@@ -133,6 +141,11 @@ def meeting_dt(date_field) -> datetime | None:
 # ------------------------------------------------------------------ fetch
 def fetch_today_meetings(call, today) -> list[dict]:
     """Meetings whose date falls on `today` (RETRO_TZ), newest first."""
+    return fetch_meetings_in_window(call, today, today)
+
+
+def fetch_meetings_in_window(call, lo_date, hi_date) -> list[dict]:
+    """Meetings whose date falls in [lo_date, hi_date] (RETRO_TZ), newest first."""
     meetings = call(MEETING_LIST, {"limit": MEETING_FETCH_LIMIT})
     if not isinstance(meetings, list):
         return []
@@ -141,7 +154,7 @@ def fetch_today_meetings(call, today) -> list[dict]:
         if not isinstance(m, dict):
             continue
         dt = meeting_dt(m.get("date"))
-        if dt and dt.date() == today:
+        if dt and lo_date <= dt.date() <= hi_date:
             out.append({**m, "_dt": dt})
     out.sort(key=lambda m: m["_dt"], reverse=True)
     return out
@@ -276,6 +289,72 @@ def build_calls_section(today=None, *, env: dict | None = None, call=None) -> st
     if not meetings:
         return None
     return render_calls_section(meetings)
+
+
+# ----------------------------------------------------- morning "Still pending"
+def _day_label(d, today) -> str:
+    """Relative day for a pending item: today / yesterday / a weekday name."""
+    delta = (today - d).days
+    if delta <= 0:
+        return "today"
+    if delta == 1:
+        return "yesterday"
+    return d.strftime("%A")
+
+
+def pending_items(meetings: list[dict], today) -> list[dict]:
+    """Open to-dos from recent calls' next steps, one per call that has them.
+    Each: {mine, text, title, day}. `mine` (mentions Shawn) is the lead signal —
+    it's his digest, so his open items come first."""
+    items = []
+    for m in meetings:
+        r = call_record(m)
+        nxt = r["next_steps"]
+        if not nxt:
+            continue
+        items.append({
+            "mine": bool(_SHAWN.search(nxt)),
+            "text": _truncate(nxt, PENDING_ITEM_MAX_CHARS),
+            "title": r["title"],
+            "day": _day_label(m["_dt"].date(), today),
+        })
+    # Shawn's items first; otherwise preserve newest-first order (stable sort).
+    items.sort(key=lambda it: not it["mine"])
+    return items
+
+
+def render_pending_section(items: list[dict]) -> str:
+    shown = items[:PENDING_MAX_ITEMS]
+    L = ["📋 Still pending", ""]
+    for it in shown:
+        L.append(f"• {it['text']} (from {it['title']}, {it['day']})")
+    extra = len(items) - len(shown)
+    if extra > 0:
+        L.append(f"_+{extra} more open item{'s' if extra != 1 else ''}._")
+    return "\n".join(L)
+
+
+def build_pending_section(today=None, *, env: dict | None = None, call=None,
+                          days: int | None = None) -> str | None:
+    """Open action items carried forward from the last `days` of calls (default
+    PENDING_LOOKBACK_DAYS), Shawn's first. None when NEBOS isn't configured/
+    reachable or nothing is pending — so the morning digest drops the section."""
+    env = os.environ if env is None else env
+    today = today or _today()
+    days = PENDING_LOOKBACK_DAYS if days is None else days
+    if call is None:
+        if not env.get("NEBOS_MCP_TOKEN"):
+            return None
+        call = make_nebos_call(env)
+    try:
+        meetings = fetch_meetings_in_window(call, today - timedelta(days=days - 1), today)
+    except Exception as exc:  # NEBOS must never sink the digest
+        logger.warning("pending: NEBOS meeting fetch failed: %s", exc)
+        return None
+    items = pending_items(meetings, today)
+    if not items:
+        return None
+    return render_pending_section(items)
 
 
 def build_retro_data(today=None, *, env: dict | None = None, call=None,

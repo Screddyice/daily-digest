@@ -29,7 +29,8 @@ _UNSET = object()
 
 
 def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
-                 llm_body=_UNSET, meetings_section=None, nebos_section=_UNSET) -> str:
+                 llm_body=_UNSET, meetings_section=None, nebos_section=_UNSET,
+                 pending_section=_UNSET) -> str:
     today = today or datetime.now(PT).date()
     if daily_by_metric is None:
         daily_by_metric = health.fetch_daily_by_metric()
@@ -39,6 +40,12 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
         meetings_section = meetings.build_section(today)
     if nebos_section is _UNSET:
         nebos_section = nebos.build_section(today)
+    if pending_section is _UNSET:
+        # Open to-dos carried forward from the last few days of calls. Lazy
+        # import: retro imports morning, so importing at module load would be a
+        # cycle; resolved here at call time instead.
+        import retro
+        pending_section = retro.build_pending_section(today)
 
     header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
     blocks = [header]
@@ -47,6 +54,11 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
     # emails to handle. Dropped when there's nothing actionable to show.
     if nebos_section:
         blocks += ["", nebos_section]
+
+    # Still pending — open action items from the last few days of calls, Shawn's
+    # first. Sits with the action sections up top; dropped when nothing is open.
+    if pending_section:
+        blocks += ["", pending_section]
 
     # You section — included only when the health feed has new data. A frozen or
     # absent feed drops the section entirely rather than re-render stale trends.

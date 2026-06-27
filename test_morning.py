@@ -142,6 +142,28 @@ class BuildDigestTests(unittest.TestCase):
         self.assertNotIn("NEBOS", out)
 
 
+class PendingPlacementTests(unittest.TestCase):
+    PENDING = "📋 Still pending\n\n• Send the revised SOW (from Carlos Sync, today)"
+
+    def test_pending_sits_after_top5_and_before_you(self):
+        nebos = "🎯 Top 5 — NEBOS\n\n• [TMNS-82] Follow up (High)"
+        out = morning.build_digest(
+            TODAY, daily_by_metric=_you_data(),
+            bella_section="🐕 Bella\n\n• Activity: steady.", llm_body=None,
+            meetings_section="", nebos_section=nebos, pending_section=self.PENDING)
+        self.assertIn("📋 Still pending", out)
+        self.assertLess(out.index("🎯 Top 5 — NEBOS"), out.index("📋 Still pending"))
+        self.assertLess(out.index("📋 Still pending"), out.index("💪 You"))
+
+    def test_none_pending_section_is_omitted(self):
+        out = morning.build_digest(
+            TODAY, daily_by_metric=_you_data(),
+            bella_section="🐕 Bella\n\n• Activity: steady.", llm_body=None,
+            meetings_section="", nebos_section="", pending_section=None)
+        self.assertNotIn("Still pending", out)
+        self.assertNotIn("📋", out)
+
+
 class AlertWiringTests(unittest.TestCase):
     def test_troublesome_pattern_reaches_the_sender(self):
         import tempfile
