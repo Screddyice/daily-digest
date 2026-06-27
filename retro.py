@@ -53,8 +53,8 @@ MEETING_LIST = "meeting_list"
 
 MEETING_FETCH_LIMIT = 40          # how many recent meetings to scan for "today"
 CALLS_MAX = 6                     # cap calls shown; the rest collapse to "+N more"
-SUMMARY_MAX_CHARS = 240
-NEXT_MAX_CHARS = 200
+SUMMARY_MAX_CHARS = 150           # one tight clause per call — the retro leads with actions, not recaps
+NEXT_MAX_CHARS = 220
 
 # Internal domains — attendees here don't make a meeting an external "call",
 # and aren't named in the "with" line.
@@ -218,10 +218,11 @@ def call_record(m: dict) -> dict:
     who = call_partners(m.get("attendees"))
     rest, nxt = split_next_steps(summary_bullets(m.get("summary") or ""))
     if rest:
-        # join the thematic bullets into one skimmable summary line
-        body = " ".join(re.sub(r"^[^:]{0,40}:\s*", "", _clean(b)) if ":" in b else _clean(b)
-                        for b in rest)
-        summary = _truncate(body, SUMMARY_MAX_CHARS)
+        # the headline point only — one tight clause, label stripped. The retro
+        # is about what's still pending, not a full recap of each call.
+        head = rest[0]
+        head = re.sub(r"^[^:]{0,40}:\s*", "", _clean(head)) if ":" in head else _clean(head)
+        summary = _truncate(head, SUMMARY_MAX_CHARS)
     else:
         summary = ""
     return {"title": title, "time": when, "who": who,
