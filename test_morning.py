@@ -34,7 +34,7 @@ class BuildDigestTests(unittest.TestCase):
     def test_digest_is_you_bella_then_meetings_last(self):
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
-                                   meetings_section=MEETINGS)
+                                   meetings_section=MEETINGS, nebos_section="")
         self.assertIn("Morning Digest", out)
         self.assertIn("💪 You", out)
         self.assertIn("🐕 Bella", out)
@@ -44,7 +44,7 @@ class BuildDigestTests(unittest.TestCase):
     def test_empty_meetings_section_is_omitted(self):
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
-                                   meetings_section="")
+                                   meetings_section="", nebos_section="")
         self.assertNotIn("Meetings", out)
         self.assertNotIn("📅", out)
 
@@ -54,7 +54,7 @@ class BuildDigestTests(unittest.TestCase):
         out = morning.build_digest(
             TODAY, daily_by_metric=_you_data(),
             bella_section="🐕 Bella\n\n• Drinking: 14 events today, drinking about as usual.",
-            llm_body=None, meetings_section="")
+            llm_body=None, meetings_section="", nebos_section="")
         lines = out.splitlines()
         you_idx = next(i for i, l in enumerate(lines) if l.startswith("💪"))
         bella_idx = next(i for i, l in enumerate(lines) if l.startswith("🐕"))
@@ -69,7 +69,7 @@ class BuildDigestTests(unittest.TestCase):
         out = morning.build_digest(
             TODAY, daily_by_metric=_you_data(),
             bella_section="🐕 Bella\n\n• Drinking: 14 events today, drinking about as usual.",
-            llm_body=llm_body, meetings_section=MEETINGS)
+            llm_body=llm_body, meetings_section=MEETINGS, nebos_section="")
         self.assertIn("Morning Digest", out)
         self.assertIn("• Activity: trending down.", out)   # You narrative verbatim
         self.assertIn("🐕 Bella", out)                      # Bella appended
@@ -80,7 +80,8 @@ class BuildDigestTests(unittest.TestCase):
     def test_falls_back_to_deterministic_when_llm_body_none(self):
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
-                                   llm_body=None, meetings_section=MEETINGS)
+                                   llm_body=None, meetings_section=MEETINGS,
+                                   nebos_section="")
         self.assertIn("💪 You", out)
         self.assertIn("🐕 Bella", out)
         self.assertIn("📅 Meetings", out)
@@ -91,7 +92,7 @@ class BuildDigestTests(unittest.TestCase):
         stale = _you_data(TODAY - timedelta(days=3))
         out = morning.build_digest(TODAY, daily_by_metric=stale,
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
-                                   llm_body=None, meetings_section="")
+                                   llm_body=None, meetings_section="", nebos_section="")
         self.assertNotIn("💪 You", out)
         self.assertNotIn("⚠️", out)
         self.assertIn("🐕 Bella", out)
@@ -99,7 +100,7 @@ class BuildDigestTests(unittest.TestCase):
     def test_no_health_data_omits_you_section(self):
         out = morning.build_digest(TODAY, daily_by_metric={},
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
-                                   llm_body=None, meetings_section="")
+                                   llm_body=None, meetings_section="", nebos_section="")
         self.assertNotIn("💪 You", out)
         self.assertIn("🐕 Bella", out)
 
@@ -108,18 +109,36 @@ class BuildDigestTests(unittest.TestCase):
         drops Bella from the digest (and must not trigger a re-fetch)."""
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
                                    bella_section=None, llm_body=None,
-                                   meetings_section="")
+                                   meetings_section="", nebos_section="")
         self.assertIn("💪 You", out)
         self.assertNotIn("🐕", out)
 
     def test_both_health_and_bella_omitted_leaves_meetings(self):
         out = morning.build_digest(TODAY, daily_by_metric={},
                                    bella_section=None, llm_body=None,
-                                   meetings_section=MEETINGS)
+                                   meetings_section=MEETINGS, nebos_section="")
         self.assertNotIn("💪 You", out)
         self.assertNotIn("🐕", out)
         self.assertIn("📅 Meetings", out)
         self.assertIn("Morning Digest", out)
+
+    def test_nebos_section_leads_the_digest(self):
+        """The Top-5 NEBOS section, when present, sits above the You section."""
+        nebos = "🎯 Top 5 — NEBOS\n\n• [TMNS-82] Follow up on Lockheed (High)"
+        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   llm_body=None, meetings_section=MEETINGS,
+                                   nebos_section=nebos)
+        self.assertIn("🎯 Top 5 — NEBOS", out)
+        self.assertTrue(out.index("🎯 Top 5 — NEBOS") < out.index("💪 You"))
+        self.assertIn("[TMNS-82]", out)
+
+    def test_empty_nebos_section_is_omitted(self):
+        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   llm_body=None, meetings_section="", nebos_section="")
+        self.assertNotIn("🎯", out)
+        self.assertNotIn("NEBOS", out)
 
 
 class AlertWiringTests(unittest.TestCase):

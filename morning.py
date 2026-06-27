@@ -21,6 +21,7 @@ import bella
 import health
 import llm
 import meetings
+import nebos
 import trends
 
 PT = ZoneInfo("America/Los_Angeles")
@@ -28,7 +29,7 @@ _UNSET = object()
 
 
 def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
-                 llm_body=_UNSET, meetings_section=None) -> str:
+                 llm_body=_UNSET, meetings_section=None, nebos_section=_UNSET) -> str:
     today = today or datetime.now(PT).date()
     if daily_by_metric is None:
         daily_by_metric = health.fetch_daily_by_metric()
@@ -36,9 +37,16 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
         bella_section = bella.build_section(today)
     if meetings_section is None:
         meetings_section = meetings.build_section(today)
+    if nebos_section is _UNSET:
+        nebos_section = nebos.build_section(today)
 
     header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
     blocks = [header]
+
+    # Top 5 (NEBOS) leads the digest — the day's action items and client
+    # emails to handle. Dropped when there's nothing actionable to show.
+    if nebos_section:
+        blocks += ["", nebos_section]
 
     # You section — included only when the health feed has new data. A frozen or
     # absent feed drops the section entirely rather than re-render stale trends.
@@ -92,8 +100,9 @@ def main() -> int:
     today = datetime.now(PT).date()
     daily_by_metric = health.fetch_daily_by_metric()
     bella_section = bella.build_section(today)  # also refreshes Bella's history
+    nebos_section = nebos.build_section(today)
     text = build_digest(today, daily_by_metric=daily_by_metric,
-                        bella_section=bella_section)
+                        bella_section=bella_section, nebos_section=nebos_section)
     dry = bool(os.environ.get("DRY_RUN"))
     if not dry and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
         _send_slack(text)

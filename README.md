@@ -1,9 +1,17 @@
 # daily-digest
 
-Shawn's morning digest — **trends only, never numbers**.
+Shawn's morning digest — **trends only, never numbers** (the work section is the
+one place real specifics are allowed, like meeting times).
 
-Two sections, one Slack DM:
+One Slack DM, led by the day's priorities and followed by personal trends:
 
+- **Top 5 — NEBOS** 🎯 — the day's most important things to handle, pulled from
+  the systems behind NEBOS (Team Nebula's central context hub): open Linear
+  issues assigned to you (action items / to-dos) and external client emails in
+  Gmail still awaiting your reply. The two streams are merged, ranked by a
+  simple urgency score (priority, overdue, and how long someone's been waiting),
+  and the top five are shown — nothing else. Reached through the same Composio
+  gateway as the meetings section.
 - **You** — five plain-English lines from live Health Auto Export (HAE) data:
   activity & exercise, lung health (blood oxygen), stress signals (HRV +
   resting HR), sleep sufficiency, and an illness watch that fires when
@@ -26,6 +34,8 @@ or yesterday.
 | `trends.py` | pure trend classification + rendering (no I/O) |
 | `health.py` | HAE fetch + the legacy numeric renderer |
 | `bella.py` | Fi login/GraphQL fetch + local step history |
+| `nebos.py` | Top-5 work section — Linear + Gmail via Composio |
+| `meetings.py` | today's calendar via Composio |
 | `morning.py` | composition + Slack delivery |
 
 ## Run
@@ -36,12 +46,14 @@ python3 morning.py               # post to Slack when SLACK_BOT_TOKEN + SLACK_CH
 ```
 
 Env: see `.env.example` (HAE base/token or connector JSON; `FI_EMAIL` /
-`FI_PASSWORD` for Bella).
+`FI_PASSWORD` for Bella; `NEB_COMPOSIO_MCP_API_KEY` for the NEBOS + meetings
+sections, with optional `NEBOS_COMPANY_DOMAIN`, default `teamnebula.ai`, to mark
+which mail is internal).
 
 ## Tests
 
 ```bash
-python3 -m unittest test_trends test_bella test_morning test_health -v
+python3 -m unittest test_trends test_bella test_morning test_health test_nebos test_meetings -v
 ```
 
 Stdlib only — no dependencies.
