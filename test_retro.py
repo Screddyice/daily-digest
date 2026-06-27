@@ -224,5 +224,57 @@ class BuildRetroTests(unittest.TestCase):
         self.assertNotIn("📞", out)
 
 
+# Pending action items carried into the morning digest. Jun 27 = Saturday.
+NS_SHAWN = meeting(
+    "Carlos Sync", JUN27_ISO,
+    "- **Recap:** Reviewed the pipeline.\n- **Next steps:** Shawn to send the revised SOW to Andres.",
+    ["shawn@teamnebula.ai", "jorge@rivus.mx"])
+NS_OTHER = meeting(
+    "Volt Sync", "2026-06-26T18:00:00.000Z",
+    "- **Recap:** Demoed the tool.\n- **Next steps:** Maira to prep the commercial deck.",
+    ["shawn@teamnebula.ai", "monica@volttruck.com"])
+NS_NONE = meeting("Standup", JUN27_ISO, "- **Recap:** Status only, nothing open.",
+                  ["shawn@teamnebula.ai"])
+# Jun 23 is outside the default 3-day lookback (window = Jun 25..27).
+NS_OLD = meeting("Old Call", "2026-06-23T18:00:00.000Z",
+                 "- **Next steps:** Shawn to do the old thing.", ["shawn@teamnebula.ai"])
+
+
+class PendingSectionTests(unittest.TestCase):
+    def test_day_label(self):
+        self.assertEqual(retro._day_label(TODAY, TODAY), "today")
+        self.assertEqual(retro._day_label(date(2026, 6, 26), TODAY), "yesterday")
+        self.assertEqual(retro._day_label(date(2026, 6, 25), TODAY), "Thursday")
+
+    def test_shawns_items_lead_and_others_follow(self):
+        call = lambda tool, args: [NS_OTHER, NS_SHAWN, NS_NONE]
+        out = retro.build_pending_section(today=TODAY, call=call)
+        self.assertIn("📋 Still pending", out)
+        self.assertIn("Shawn to send the revised SOW", out)
+        self.assertIn("Maira to prep the commercial deck", out)
+        # Shawn's open item leads, regardless of call recency.
+        self.assertLess(out.index("revised SOW"), out.index("Maira"))
+        self.assertIn("(from Carlos Sync, today)", out)
+        self.assertIn("(from Volt Sync, yesterday)", out)
+
+    def test_calls_without_next_steps_are_skipped(self):
+        call = lambda tool, args: [NS_NONE]
+        self.assertIsNone(retro.build_pending_section(today=TODAY, call=call))
+
+    def test_window_excludes_older_calls(self):
+        call = lambda tool, args: [NS_OLD]            # Jun 23, outside 3-day window
+        self.assertIsNone(retro.build_pending_section(today=TODAY, call=call))
+
+    def test_none_without_nebos_token(self):
+        self.assertIsNone(retro.build_pending_section(today=TODAY, env={}))
+
+    def test_overflow_collapses_to_more_line(self):
+        many = [meeting(f"Call {i}", JUN27_ISO,
+                        f"- **Next steps:** Shawn to handle item {i}.",
+                        ["shawn@teamnebula.ai"]) for i in range(retro.PENDING_MAX_ITEMS + 2)]
+        out = retro.build_pending_section(today=TODAY, call=lambda t, a: many)
+        self.assertIn("more open item", out)
+
+
 if __name__ == "__main__":
     unittest.main()
