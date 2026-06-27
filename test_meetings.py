@@ -3,7 +3,7 @@
     python3 -m unittest test_meetings -v
 
 The spec: at the end of the digest, list today's meetings — each with the
-time + title and 1-2 very concise bullets: who it's with, and (when the
+time + title and one concise context bullet: who it's with and (when the
 event has a usable description) what it's for. Degrades explicitly, never
 sinks the digest.
 """
@@ -72,14 +72,22 @@ class ParseEventTests(unittest.TestCase):
 
 
 class RenderSectionTests(unittest.TestCase):
-    def test_meeting_renders_time_title_and_two_bullets(self):
+    def test_meeting_renders_time_title_and_one_context_bullet(self):
         out = meetings.render_section([meetings.parse_event(_ev(
             attendees=[{"email": "andres@rivus.com", "displayName": "Andres"}],
             description="Phase 2 SOW review."))])
         self.assertIn("📅 Meetings", out)
         self.assertIn("9:00 AM — Rivus Phase 2 sync", out)
+        # who + what-for live on a single combined bullet
+        self.assertIn("• With Andres — Phase 2 SOW review.", out)
+        bullets = [l for l in out.splitlines() if l.strip().startswith("•")]
+        self.assertEqual(len(bullets), 1)
+
+    def test_context_bullet_is_just_who_when_no_purpose(self):
+        out = meetings.render_section([meetings.parse_event(_ev(
+            attendees=[{"email": "andres@rivus.com", "displayName": "Andres"}]))])
         self.assertIn("• With Andres", out)
-        self.assertIn("• Phase 2 SOW review.", out)
+        self.assertNotIn(" — ", out.split("Rivus Phase 2 sync", 1)[1])  # no dangling dash
 
     def test_solo_event_says_just_you(self):
         out = meetings.render_section([meetings.parse_event(_ev())])
