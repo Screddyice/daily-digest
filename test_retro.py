@@ -147,6 +147,24 @@ class BuildSectionTests(unittest.TestCase):
         self.assertIsNone(retro.build_calls_section(TODAY, env={}, call=lambda t, a: {"error": "x"}))
 
 
+class TodayTests(unittest.TestCase):
+    def test_retro_date_override(self):
+        import os
+        os.environ["RETRO_DATE"] = "2026-06-24"
+        try:
+            self.assertEqual(retro._today(), date(2026, 6, 24))
+        finally:
+            del os.environ["RETRO_DATE"]
+
+    def test_bad_retro_date_falls_back_to_now(self):
+        import os
+        os.environ["RETRO_DATE"] = "not-a-date"
+        try:
+            self.assertIsInstance(retro._today(), date)
+        finally:
+            del os.environ["RETRO_DATE"]
+
+
 class CallRecordTests(unittest.TestCase):
     def test_record_fields(self):
         m = {**DISCOVERY, "_dt": retro.meeting_dt(JUN27_ISO)}

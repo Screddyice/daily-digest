@@ -36,6 +36,17 @@ logger = logging.getLogger(__name__)
 RETRO_TZ = ZoneInfo(os.environ.get("RETRO_TZ", "America/Los_Angeles"))
 _UNSET = object()
 
+
+def _today():
+    """Today in RETRO_TZ, or a fixed RETRO_DATE (YYYY-MM-DD) for test/backfill runs."""
+    override = os.environ.get("RETRO_DATE", "").strip()
+    if override:
+        try:
+            return datetime.strptime(override, "%Y-%m-%d").date()
+        except ValueError:
+            logger.warning("retro: ignoring bad RETRO_DATE=%r", override)
+    return datetime.now(RETRO_TZ).date()
+
 # NEBOS MCP endpoint — the Fireflies-fed meeting store. Bearer-token auth.
 NEBOS_MCP_URL = os.environ.get("NEBOS_MCP_URL", "https://teamnebula-os.web.app/api/mcp")
 MEETING_LIST = "meeting_list"
@@ -251,7 +262,7 @@ def build_calls_section(today=None, *, env: dict | None = None, call=None) -> st
     """The Calls section, or None when NEBOS isn't configured/reachable or there
     were no calls today."""
     env = os.environ if env is None else env
-    today = today or datetime.now(RETRO_TZ).date()
+    today = today or _today()
     if call is None:
         if not env.get("NEBOS_MCP_TOKEN"):
             return None
@@ -272,7 +283,7 @@ def build_retro_data(today=None, *, env: dict | None = None, call=None,
     today's calls (each with summary + raw next_steps for owner attribution)
     and the Top-5 NEBOS bullet lines. No judgment, no Slack — just the data."""
     env = os.environ if env is None else env
-    today = today or datetime.now(RETRO_TZ).date()
+    today = today or _today()
 
     meetings: list[dict] = []
     if call is not None or env.get("NEBOS_MCP_TOKEN"):
@@ -296,7 +307,7 @@ def build_retro_data(today=None, *, env: dict | None = None, call=None,
 
 
 def build_retro(today=None, *, nebos_section=_UNSET, calls_section=_UNSET) -> str:
-    today = today or datetime.now(RETRO_TZ).date()
+    today = today or _today()
     if nebos_section is _UNSET:
         nebos_section = nebos.build_section(today)
     if calls_section is _UNSET:
@@ -312,7 +323,7 @@ def build_retro(today=None, *, nebos_section=_UNSET, calls_section=_UNSET) -> st
 
 
 def main() -> int:
-    today = datetime.now(RETRO_TZ).date()
+    today = _today()
     # --json: emit deterministic data for the routine's LLM to compose the
     # action-items-first message from. The routine reads this, not the rendered
     # text below (which stays as a self-contained local/fallback render).
