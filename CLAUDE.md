@@ -67,13 +67,19 @@ for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (Nebula Assist),
 `RETRO_TZ` (optional — timezone for the Call Retro's "today" window + header,
 default `America/Los_Angeles`; set `Europe/London` etc. for where Shawn is based),
 HAE (`HAE_BASE_URL`/`HAE_READ_TOKEN` or connector JSON), `FI_EMAIL`/`FI_PASSWORD`.
-`DRY_RUN=1` prints instead of posting.
+`DRY_RUN=1` prints instead of posting. `DIGEST_NO_ALERTS=1` skips the stateful
+Telegram alerts (the digest still posts) — set it in stateless runtimes like a
+cloud routine, where the edge-filter STATE_PATH can't persist between runs.
+
+When HAE is not configured at all (no env vars and no connector file, e.g. a
+cloud sandbox), health degrades to empty and the `💪 You` section simply drops —
+it never crashes the digest.
 
 ## Run / test
 ```bash
 DRY_RUN=1 python3 morning.py
 DRY_RUN=1 python3 retro.py
-python3 -m unittest discover -p 'test_*.py'   # currently 158 tests, all passing
+python3 -m unittest discover -p 'test_*.py'   # currently 169 tests, all passing
 ```
 
 ## Deployment = Claude routines (NOT this repo's CI)

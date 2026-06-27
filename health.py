@@ -49,7 +49,13 @@ def load_hae_config() -> tuple[str, str]:
     if base and token:
         return base, token
     path = Path(os.environ.get("HAE_CONNECTOR_JSON", str(DEFAULT_CONNECTOR)))
-    cfg = json.loads(path.read_text())
+    try:
+        cfg = json.loads(path.read_text())
+    except (OSError, ValueError):
+        # No env vars and no readable connector file (e.g. a cloud sandbox with
+        # no HAE tunnel) — report "unconfigured" rather than crash. The caller
+        # treats empty creds as "no health data", so the You section just drops.
+        cfg = {}
     return (
         base or cfg.get("base_url") or cfg.get("url") or "",
         token or cfg.get("read_token") or cfg.get("token") or "",
@@ -359,6 +365,8 @@ def fetch_daily_by_metric(*, fetch: Callable = fetch_metric,
                           ) -> dict[str, dict[str, float]]:
     """Fetch live values from HAE for every digest metric. Resilient per-metric."""
     base, token = config()
+    if not (base and token):
+        return {}  # HAE not configured (no env, no connector file) -> You drops
     wanted = (
         ("step_count", "sum"),
         ("active_energy", "sum"),
