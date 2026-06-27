@@ -27,32 +27,40 @@ PT = ZoneInfo("America/Los_Angeles")
 _UNSET = object()
 
 
-def build_digest(today=None, *, daily_by_metric=None, bella_section=None,
+def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
                  llm_body=_UNSET, meetings_section=None) -> str:
     today = today or datetime.now(PT).date()
     if daily_by_metric is None:
         daily_by_metric = health.fetch_daily_by_metric()
-    if bella_section is None:
+    if bella_section is _UNSET:
         bella_section = bella.build_section(today)
     if meetings_section is None:
         meetings_section = meetings.build_section(today)
 
-    if llm_body is _UNSET:
-        # Snapshot this export, compare against the previous one via the LLM.
-        # The LLM writes ONLY the numberless "You" narrative; Bella's section is
-        # rendered deterministically below so her real numbers survive the
-        # digit-gate (which now governs the You body alone).
-        bella_series = bella.load_history(bella.DEFAULT_HISTORY)
-        previous = llm.load_previous_snapshot(llm.SNAPSHOT_DIR, today)
-        llm.save_snapshot(llm.SNAPSHOT_DIR, today, daily_by_metric, bella_series)
-        current = {"date": today.isoformat(), "you": daily_by_metric}
-        llm_body = llm.generate_digest(current, previous, today)
-
     header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
-    # You section: LLM narrative when available, else the deterministic
-    # numberless renderer. Bella's numeric section is always appended.
-    you_block = llm_body or trends.render_you_section(daily_by_metric, today)
-    blocks = [header, "", you_block, "", bella_section]
+    blocks = [header]
+
+    # You section — included only when the health feed has new data. A frozen or
+    # absent feed drops the section entirely rather than re-render stale trends.
+    if trends.has_fresh_data(daily_by_metric, today):
+        if llm_body is _UNSET:
+            # Snapshot this export, compare against the previous one via the LLM.
+            # The LLM writes ONLY the numberless "You" narrative; Bella's section
+            # is rendered deterministically (in bella.build_section) so her real
+            # numbers survive the digit-gate, which governs the You body alone.
+            bella_series = bella.load_history(bella.DEFAULT_HISTORY)
+            previous = llm.load_previous_snapshot(llm.SNAPSHOT_DIR, today)
+            llm.save_snapshot(llm.SNAPSHOT_DIR, today, daily_by_metric, bella_series)
+            current = {"date": today.isoformat(), "you": daily_by_metric}
+            llm_body = llm.generate_digest(current, previous, today)
+        you_block = llm_body or trends.render_you_section(daily_by_metric, today)
+        blocks += ["", you_block]
+
+    # Bella section — build_section returns None when her collar has no new data,
+    # in which case her section is dropped too.
+    if bella_section:
+        blocks += ["", bella_section]
+
     if meetings_section:  # always last; times are the one allowed digit zone
         blocks += ["", meetings_section]
     return "\n".join(blocks)

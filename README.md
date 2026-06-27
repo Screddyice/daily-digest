@@ -14,9 +14,10 @@ Two sections, one Slack DM:
   (`~/.daily-digest/bella_history.json`) since Fi only exposes the current
   daily total. Trends become readable after about a week of runs.
 
-If the data feed is frozen, the digest says so loudly
-(`⚠️ … hasn't synced since Tuesday`) instead of silently re-rendering stale
-numbers as fresh.
+If a feed has no new data — frozen for a couple of days, or never configured —
+that section is dropped from the digest entirely, rather than re-rendering stale
+trends as if they were fresh. A section appears only when its feed synced today
+or yesterday.
 
 ## Modules
 

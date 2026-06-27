@@ -202,10 +202,11 @@ class HistoryTests(unittest.TestCase):
 
 
 class BuildSectionTests(unittest.TestCase):
-    def test_no_credentials_degrades_gracefully(self):
+    def test_no_credentials_omits_section(self):
+        """No Fi creds → no new data → the section is dropped (None), not a
+        placeholder line."""
         out = bella.build_section(TODAY, env={}, history_path=Path("/nonexistent"))
-        self.assertIn("Bella", out)
-        self.assertIn("not configured", out.lower())
+        self.assertIsNone(out)
 
     def test_build_section_with_injected_gql(self):
         responses = {"pets": PETS_RESPONSE, "steps": STEPS_RESPONSE,
@@ -255,14 +256,36 @@ class BuildSectionTests(unittest.TestCase):
             self.assertEqual(len(sleep), 12)  # 10 prior + Jun 11 + Jun 12 from the feed
             self.assertEqual(sleep["2026-06-12"], (28800 + 3600) / 60)
 
-    def test_fi_error_degrades_not_raises(self):
+    def test_fi_error_omits_section_not_raises(self):
+        """A fetch failure must not raise; with no new data, the section drops."""
         def boom(kind, **kw):
             raise OSError("fi down")
 
         out = bella.build_section(TODAY, env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
                                   history_path=Path("/nonexistent/h.json"), gql=boom)
-        self.assertIn("Bella", out)
-        self.assertIn("unavailable", out.lower())
+        self.assertIsNone(out)
+
+    def test_frozen_feed_omits_section(self):
+        """Collar synced days ago and nothing new today → section dropped."""
+        responses = {"pets": PETS_RESPONSE,
+                     "steps": {"data": {"pet": {}}},          # no current steps
+                     "rest": {"data": {"pet": {"restSummaryFeed": {"restSummaries": []}}}},
+                     "trends": {"data": {"getPetHealthTrendsForPet": {
+                         "period": "DAY", "genericTrends": [], "behaviorTrends": []}}},
+                     "profile": PROFILE_RESPONSE}
+
+        def fake_gql(kind, **kw):
+            return responses[kind]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "hist.json"
+            # only old readings on file — newest is 5 days before today
+            for i in range(5):
+                bella.update_history(path, "steps", f"2026-06-0{3 + i}", 8000.0)
+            out = bella.build_section(TODAY, env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
+                                      history_path=path, profile_path=Path(tmp) / "p.json",
+                                      gql=fake_gql, pet_name="Bella")
+            self.assertIsNone(out)
 
 
 if __name__ == "__main__":

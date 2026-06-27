@@ -85,6 +85,42 @@ class BuildDigestTests(unittest.TestCase):
         self.assertIn("🐕 Bella", out)
         self.assertIn("📅 Meetings", out)
 
+    def test_stale_health_omits_you_section(self):
+        """Health feed frozen for days → no new data → You section dropped,
+        no warning line either; Bella's fresh section still shows."""
+        stale = _you_data(TODAY - timedelta(days=3))
+        out = morning.build_digest(TODAY, daily_by_metric=stale,
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   llm_body=None, meetings_section="")
+        self.assertNotIn("💪 You", out)
+        self.assertNotIn("⚠️", out)
+        self.assertIn("🐕 Bella", out)
+
+    def test_no_health_data_omits_you_section(self):
+        out = morning.build_digest(TODAY, daily_by_metric={},
+                                   bella_section="🐕 Bella\n\n• Activity: steady.",
+                                   llm_body=None, meetings_section="")
+        self.assertNotIn("💪 You", out)
+        self.assertIn("🐕 Bella", out)
+
+    def test_none_bella_section_is_omitted(self):
+        """build_section returns None when the collar has no new data; that
+        drops Bella from the digest (and must not trigger a re-fetch)."""
+        out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
+                                   bella_section=None, llm_body=None,
+                                   meetings_section="")
+        self.assertIn("💪 You", out)
+        self.assertNotIn("🐕", out)
+
+    def test_both_health_and_bella_omitted_leaves_meetings(self):
+        out = morning.build_digest(TODAY, daily_by_metric={},
+                                   bella_section=None, llm_body=None,
+                                   meetings_section=MEETINGS)
+        self.assertNotIn("💪 You", out)
+        self.assertNotIn("🐕", out)
+        self.assertIn("📅 Meetings", out)
+        self.assertIn("Morning Digest", out)
+
 
 class AlertWiringTests(unittest.TestCase):
     def test_troublesome_pattern_reaches_the_sender(self):
