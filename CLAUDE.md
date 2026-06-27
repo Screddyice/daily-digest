@@ -8,7 +8,9 @@ Personal/work digests for Shawn (Team Nebula), delivered to Slack as the
 Two digests, both posted to Slack DM **`D0AGFSC9PHN`** (Shawn ↔ Nebula Assist bot
 `U0AFMJ70JV8`) via `morning._send_slack` (`SLACK_BOT_TOKEN` + `SLACK_CHANNEL`):
 
-- **Morning Digest** — `morning.py`. Order: `🎯 Top 5 — NEBOS` (lead) → `💪 You`
+- **Morning Digest** — `morning.py`. Order: `🎯 Top 5 — NEBOS` (lead) →
+  `📋 Still pending` (open action items carried forward from the last few days
+  of calls, Shawn-owned first; from `retro.build_pending_section`) → `💪 You`
   (health trends) → `🐕 Bella` (collar trends) → `📅 Meetings`.
 - **Call Retro** — `retro.py`. End-of-day: re-synced `🎯 Top 5 — NEBOS` → `📞 Calls`
   section recapping every call today, sourced from the **NEBOS meeting store**
@@ -66,6 +68,8 @@ for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (Nebula Assist),
 `SLACK_CHANNEL=D0AGFSC9PHN`, `NEBOS_CLIENT_DOMAINS=rivus.mx,newcalgon.net,rs21.io`,
 `RETRO_TZ` (optional — timezone for the Call Retro's "today" window + header,
 default `America/Los_Angeles`; set `Europe/London` etc. for where Shawn is based),
+`PENDING_LOOKBACK_DAYS` (optional, default 3 — window for the Morning Digest's
+`📋 Still pending` section; needs `NEBOS_MCP_TOKEN` like the Call Retro),
 HAE (`HAE_BASE_URL`/`HAE_READ_TOKEN` or connector JSON), `FI_EMAIL`/`FI_PASSWORD`.
 `DRY_RUN=1` prints instead of posting. `DIGEST_NO_ALERTS=1` skips the stateful
 Telegram alerts (the digest still posts) — set it in stateless runtimes like a
@@ -79,7 +83,7 @@ it never crashes the digest.
 ```bash
 DRY_RUN=1 python3 morning.py
 DRY_RUN=1 python3 retro.py
-python3 -m unittest discover -p 'test_*.py'   # currently 169 tests, all passing
+python3 -m unittest discover -p 'test_*.py'   # currently 177 tests, all passing
 ```
 
 ## Deployment = Claude routines (NOT this repo's CI)
