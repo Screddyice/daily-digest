@@ -285,21 +285,24 @@ def update_history(path: Path, metric: str, day: str, value: float) -> None:
 def build_section(today: date | None = None, *, env: dict | None = None,
                   history_path: Path = DEFAULT_HISTORY,
                   profile_path: Path = DEFAULT_PROFILE, gql=None,
-                  pet_name: str | None = None) -> str:
+                  pet_name: str | None = None) -> str | None:
+    """Bella's rendered section, or None when there's no new data to show — Fi
+    unconfigured/unreachable, or her collar feed frozen or empty. The digest
+    drops the section entirely on None rather than surfacing a stale one."""
     today = today or date.today()
     env = os.environ if env is None else env
     pet_name = pet_name or env.get("FI_PET_NAME", "Bella")
 
     email, password = env.get("FI_EMAIL"), env.get("FI_PASSWORD")
     if gql is None and not (email and password):
-        return f"🐕 {pet_name}\n\nFi not configured — set FI_EMAIL + FI_PASSWORD to track her."
+        return None  # Fi not configured — nothing new to report
 
     try:
         if gql is None:
             gql = make_gql(email, password)
         pet_id = find_pet_id(gql("pets"), pet_name)
         if not pet_id:
-            return f"🐕 {pet_name}\n\nCouldn't find {pet_name} on the Fi account."
+            return None  # not on this Fi account — nothing to report
         steps_today = parse_daily_steps(gql("steps", pet_id=pet_id))
         sleep = parse_rest_summaries(gql("rest", pet_id=pet_id))
         try:
@@ -311,9 +314,9 @@ def build_section(today: date | None = None, *, env: dict | None = None,
             save_profile(profile_path, parse_profile(gql("profile", pet_id=pet_id), today))
         except Exception as exc:
             logger.warning("bella: profile fetch failed: %s", exc)
-    except Exception as exc:  # Bella's section must never sink the digest
+    except Exception as exc:  # collar unreachable — no new data, so no section
         logger.warning("bella: fi fetch failed: %s", exc)
-        return f"🐕 {pet_name}\n\nFi unavailable right now — couldn't reach the collar data."
+        return None
 
     if steps_today is not None:
         update_history(history_path, "steps", today.isoformat(), steps_today)
@@ -325,4 +328,6 @@ def build_section(today: date | None = None, *, env: dict | None = None,
     series = {k: hist.get(k, {}) for k in
               ("steps", "sleep", *{ek for ek, dk in TREND_KEYS.values() if ek},
                *{dk for ek, dk in TREND_KEYS.values() if dk})}
+    if not trends.has_fresh_data(series, today):
+        return None  # collar feed frozen or empty — drop the section
     return trends.render_pet_section(pet_name, series, today)

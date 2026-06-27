@@ -1,8 +1,8 @@
 """Today's meetings — TMN Google Calendar via Composio REST + render.
 
 Closes the digest with what's on the calendar: one line per meeting
-(time + title) and 1-2 very concise bullets — who it's with, and what
-it's for when the event description gives a usable purpose (video-call
+(time + title) and a single concise context bullet — who it's with and
+what it's for when the event description gives a usable purpose (video-call
 boilerplate and links are stripped, never shown).
 
 This is the one digest section where digits are allowed (meeting times);
@@ -125,13 +125,16 @@ def parse_event(ev: dict) -> dict:
 
 
 # ------------------------------------------------------------------ rendering
-def _with_line(who: list[str]) -> str:
-    if not who:
-        return "  • Just you on this one."
-    shown = who[:MAX_NAMES]
-    if len(who) > MAX_NAMES:
-        shown.append(f"and {len(who) - MAX_NAMES} more")
-    return f"  • With {', '.join(shown)}"
+def _context_line(who: list[str], purpose: str | None) -> str:
+    """One bullet of context per meeting: who it's with and what it's for."""
+    if who:
+        shown = who[:MAX_NAMES]
+        if len(who) > MAX_NAMES:
+            shown.append(f"and {len(who) - MAX_NAMES} more")
+        whostr = "With " + ", ".join(shown)
+    else:
+        whostr = "Just you"
+    return f"  • {whostr} — {purpose}" if purpose else f"  • {whostr}"
 
 
 def render_section(parsed: list[dict]) -> str:
@@ -141,9 +144,7 @@ def render_section(parsed: list[dict]) -> str:
         return "\n".join(L)
     for m in parsed:
         L.append(f"{m['when']} — {m['title']}")
-        L.append(_with_line(m["who"]))
-        if m["purpose"]:
-            L.append(f"  • {m['purpose']}")
+        L.append(_context_line(m["who"], m["purpose"]))
     return "\n".join(L)
 
 

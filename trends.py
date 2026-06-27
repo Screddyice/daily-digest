@@ -98,6 +98,15 @@ def staleness_days(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     return (today - date.fromisoformat(newest)).days
 
 
+def has_fresh_data(daily_by_metric: dict[str, dict[str, float]], today: date) -> bool:
+    """True when the feed carries new data — its newest datapoint is within the
+    freshness window (today or yesterday). A frozen feed (synced days ago) or an
+    empty one returns False, which the digest uses to drop the section entirely
+    rather than re-render stale trends as if they were fresh."""
+    age = staleness_days(daily_by_metric, today)
+    return age is not None and age < STALE_AFTER_DAYS
+
+
 def _recent_mean(daily: dict[str, float]) -> float | None:
     recent, _ = _recent_and_baseline(daily)
     return sum(recent) / len(recent) if recent else None
