@@ -5,6 +5,7 @@
 import re
 import unittest
 from datetime import date, timedelta
+from unittest import mock
 
 import morning
 
@@ -164,6 +165,39 @@ class AlertWiringTests(unittest.TestCase):
                                send=lambda lines: sent.extend(lines),
                                state_path=Path(tmp) / "s.json")
         self.assertEqual(sent, [])
+
+
+class MainAlertsGuardTests(unittest.TestCase):
+    """main() must still POST the digest but SKIP the stateful Telegram alerts
+    when DIGEST_NO_ALERTS is set (a stateless cloud-routine runtime)."""
+
+    def _patches(self):
+        return mock.patch.multiple(
+            morning,
+            _send_slack=mock.DEFAULT, run_alerts=mock.DEFAULT)
+
+    def test_digest_no_alerts_posts_but_skips_alerts(self):
+        env = {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0", "DIGEST_NO_ALERTS": "1"}
+        with mock.patch.dict(morning.os.environ, env, clear=True), \
+                mock.patch.object(morning.health, "fetch_daily_by_metric", return_value={}), \
+                mock.patch.object(morning.bella, "build_section", return_value=None), \
+                mock.patch.object(morning.nebos, "build_section", return_value=None), \
+                mock.patch.object(morning.meetings, "build_section", return_value=None), \
+                self._patches() as m:
+            self.assertEqual(morning.main(), 0)
+            m["_send_slack"].assert_called_once()
+            m["run_alerts"].assert_not_called()
+
+    def test_alerts_run_by_default(self):
+        env = {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0"}
+        with mock.patch.dict(morning.os.environ, env, clear=True), \
+                mock.patch.object(morning.health, "fetch_daily_by_metric", return_value={}), \
+                mock.patch.object(morning.bella, "build_section", return_value=None), \
+                mock.patch.object(morning.nebos, "build_section", return_value=None), \
+                mock.patch.object(morning.meetings, "build_section", return_value=None), \
+                self._patches() as m:
+            self.assertEqual(morning.main(), 0)
+            m["run_alerts"].assert_called_once()
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 """
 import unittest
 from datetime import date, timedelta
+from unittest import mock
 
 import health
 
@@ -64,6 +65,28 @@ class WatchStateTests(unittest.TestCase):
         out = health.build_section(today=TODAY, fetch=boom, config=lambda: ("http://x", "tok"))
         self.assertIn("Health", out)
         self.assertIn("steps", out)
+
+
+class NoHAEConfiguredTests(unittest.TestCase):
+    """A cloud sandbox with no HAE env vars and no connector file must degrade to
+    empty (You section drops), never crash the whole digest."""
+
+    def test_load_hae_config_returns_empty_when_no_env_and_no_file(self):
+        env = {"HAE_CONNECTOR_JSON": "/nonexistent/definitely-not-here.json"}
+        with mock.patch.dict(health.os.environ, env, clear=True):
+            self.assertEqual(health.load_hae_config(), ("", ""))
+
+    def test_fetch_daily_by_metric_short_circuits_without_creds(self):
+        called = []
+
+        def fetch_should_not_run(**kwargs):
+            called.append(kwargs["metric"])
+            return []
+
+        out = health.fetch_daily_by_metric(fetch=fetch_should_not_run,
+                                           config=lambda: ("", ""))
+        self.assertEqual(out, {})
+        self.assertEqual(called, [])  # no HAE requests attempted
 
 
 if __name__ == "__main__":

@@ -113,6 +113,12 @@ def main() -> int:
     if dry:
         found = alerts.detect_alerts(daily_by_metric, bella_series, today)
         print(f"[dry-run] alerts that would be considered: {found or 'none'}")
+    elif os.environ.get("DIGEST_NO_ALERTS"):
+        # Stateless runtime (e.g. a cloud routine in a fresh sandbox): skip the
+        # edge-filtered Telegram alerts. They need a persistent STATE_PATH to
+        # avoid re-alerting the same condition every run, which an ephemeral
+        # sandbox can't provide. The digest itself has already posted above.
+        pass
     else:
         run_alerts(daily_by_metric, bella_series, today)
     return 0
