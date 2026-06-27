@@ -147,6 +147,49 @@ class BuildSectionTests(unittest.TestCase):
         self.assertIsNone(retro.build_calls_section(TODAY, env={}, call=lambda t, a: {"error": "x"}))
 
 
+class CallRecordTests(unittest.TestCase):
+    def test_record_fields(self):
+        m = {**DISCOVERY, "_dt": retro.meeting_dt(JUN27_ISO)}
+        r = retro.call_record(m)
+        self.assertEqual(r["title"], "Discovery (Carlos)")
+        self.assertEqual(r["who"], "Rivus")
+        self.assertTrue(r["label_line"].startswith("*Discovery (Carlos)*"))
+        self.assertTrue(r["summary"])
+        self.assertIn("Data sharing", r["next_steps"])
+
+    def test_prose_record_has_no_next_steps(self):
+        r = retro.call_record({**VOLT, "_dt": retro.meeting_dt(JUN27_ISO)})
+        self.assertEqual(r["next_steps"], "")
+        self.assertTrue(r["summary"])
+
+    def test_section_bullets_extracts_only_bullets(self):
+        section = "🎯 Top 5 — NEBOS\n\n• [TMNS-82] Follow up (High)\n• Reply to X — y"
+        self.assertEqual(retro._section_bullets(section),
+                         ["• [TMNS-82] Follow up (High)", "• Reply to X — y"])
+        self.assertEqual(retro._section_bullets(None), [])
+
+
+class BuildDataTests(unittest.TestCase):
+    def _call(self, meetings):
+        return lambda tool, args: meetings
+
+    def test_data_shape_and_counts(self):
+        data = retro.build_retro_data(
+            TODAY, env={}, call=self._call([DISCOVERY, VOLT, STALE]),
+            nebos_section="🎯 Top 5 — NEBOS\n\n• Reply to Luis (Rivus) — Carlos")
+        self.assertEqual(data["label"], "Saturday, June 27")
+        self.assertEqual(data["call_count"], 2)              # STALE (Jun 24) filtered out
+        self.assertEqual(data["top5"], ["• Reply to Luis (Rivus) — Carlos"])
+        self.assertEqual({c["title"] for c in data["calls"]},
+                         {"Discovery (Carlos)", "VoltTruck Discovery"})
+
+    def test_no_token_no_calls(self):
+        data = retro.build_retro_data(TODAY, env={}, nebos_section=None)
+        self.assertEqual(data["call_count"], 0)
+        self.assertEqual(data["calls"], [])
+        self.assertEqual(data["top5"], [])
+
+
 class BuildRetroTests(unittest.TestCase):
     def test_retro_leads_with_nebos_then_calls(self):
         out = retro.build_retro(

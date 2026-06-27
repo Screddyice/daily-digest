@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import sys
 import urllib.request
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -196,24 +197,42 @@ def call_partners(attendees) -> str:
     return ", ".join(orgs[:3])
 
 
-# ------------------------------------------------------------------ render
-def render_one_call(m: dict) -> str:
+# ------------------------------------------------------------------ records
+def call_record(m: dict) -> dict:
+    """Structured, deterministic facts about one call — the unit both the
+    rendered Calls section and the --json data mode are built from. Owner
+    attribution of next steps is deliberately left to the composing layer."""
     title = (m.get("title") or "Call").strip()
     when = m["_dt"].strftime("%-I:%M %p").lstrip("0")
     who = call_partners(m.get("attendees"))
-    head = f"*{title}* ({when}" + (f", {who}" if who else "") + ")"
-
     rest, nxt = split_next_steps(summary_bullets(m.get("summary") or ""))
-    lines = [head]
     if rest:
         # join the thematic bullets into one skimmable summary line
         body = " ".join(re.sub(r"^[^:]{0,40}:\s*", "", _clean(b)) if ":" in b else _clean(b)
                         for b in rest)
-        lines.append(f"• {_truncate(body, SUMMARY_MAX_CHARS)}")
+        summary = _truncate(body, SUMMARY_MAX_CHARS)
     else:
-        lines.append("• No summary in the notes yet.")
-    if nxt:
-        lines.append(f"• Next: {_truncate(nxt, NEXT_MAX_CHARS)}")
+        summary = ""
+    return {"title": title, "time": when, "who": who,
+            "label_line": f"*{title}* ({when}" + (f", {who}" if who else "") + ")",
+            "summary": summary,
+            "next_steps": _truncate(nxt, NEXT_MAX_CHARS) if nxt else ""}
+
+
+def _section_bullets(section: str | None) -> list[str]:
+    """The `• ` lines of a rendered NEBOS section (header/blank dropped)."""
+    if not section:
+        return []
+    return [ln for ln in section.splitlines() if ln.startswith("• ")]
+
+
+# ------------------------------------------------------------------ render
+def render_one_call(m: dict) -> str:
+    r = call_record(m)
+    lines = [r["label_line"]]
+    lines.append(f"• {r['summary']}" if r["summary"] else "• No summary in the notes yet.")
+    if r["next_steps"]:
+        lines.append(f"• Next: {r['next_steps']}")
     return "\n".join(lines)
 
 
@@ -247,6 +266,35 @@ def build_calls_section(today=None, *, env: dict | None = None, call=None) -> st
     return render_calls_section(meetings)
 
 
+def build_retro_data(today=None, *, env: dict | None = None, call=None,
+                     nebos_section=_UNSET) -> dict:
+    """Deterministic facts for the Call Retro, for an LLM to compose from:
+    today's calls (each with summary + raw next_steps for owner attribution)
+    and the Top-5 NEBOS bullet lines. No judgment, no Slack — just the data."""
+    env = os.environ if env is None else env
+    today = today or datetime.now(RETRO_TZ).date()
+
+    meetings: list[dict] = []
+    if call is not None or env.get("NEBOS_MCP_TOKEN"):
+        nebos_call = call or make_nebos_call(env)
+        try:
+            meetings = fetch_today_meetings(nebos_call, today)
+        except Exception as exc:  # NEBOS hiccup → no calls, never a crash
+            logger.warning("retro: NEBOS meeting fetch failed: %s", exc)
+            meetings = []
+
+    if nebos_section is _UNSET:
+        nebos_section = nebos.build_section(today, env=env)
+
+    return {
+        "date": today.isoformat(),
+        "label": f"{today:%A, %B %-d}",
+        "call_count": len(meetings),
+        "top5": _section_bullets(nebos_section),
+        "calls": [call_record(m) for m in meetings],
+    }
+
+
 def build_retro(today=None, *, nebos_section=_UNSET, calls_section=_UNSET) -> str:
     today = today or datetime.now(RETRO_TZ).date()
     if nebos_section is _UNSET:
@@ -265,6 +313,12 @@ def build_retro(today=None, *, nebos_section=_UNSET, calls_section=_UNSET) -> st
 
 def main() -> int:
     today = datetime.now(RETRO_TZ).date()
+    # --json: emit deterministic data for the routine's LLM to compose the
+    # action-items-first message from. The routine reads this, not the rendered
+    # text below (which stays as a self-contained local/fallback render).
+    if "--json" in sys.argv:
+        print(json.dumps(build_retro_data(today)))
+        return 0
     text = build_retro(today)
     if not os.environ.get("DRY_RUN") and os.environ.get("SLACK_BOT_TOKEN") \
             and os.environ.get("SLACK_CHANNEL"):
