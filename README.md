@@ -38,14 +38,24 @@ or yesterday.
 | `bella.py` | Fi login/GraphQL fetch + local step history |
 | `nebos.py` | Top-5 work section — Linear + Gmail via Composio |
 | `meetings.py` | today's calendar via Composio |
-| `morning.py` | composition + Slack delivery |
+| `morning.py` | morning digest composition + Slack delivery |
+| `retro.py` | Call Retro — end-of-day NEBOS Top 5 + call summary/action items |
 
 ## Run
 
 ```bash
 DRY_RUN=1 python3 morning.py     # print, don't post
 python3 morning.py               # post to Slack when SLACK_BOT_TOKEN + SLACK_CHANNEL set
+
+DRY_RUN=1 python3 retro.py       # Call Retro (end-of-day): NEBOS Top 5 + call recap
+python3 retro.py                 # post the retro to Slack
 ```
+
+**Call Retro** (`retro.py`) is the end-of-day counterpart: the re-synced NEBOS
+Top 5, then a **Call** section with one line summarizing the day's call and one
+line of its action items, parsed from the meeting's Gemini notes (`Summary` +
+`Next steps`). It uses the newest "Notes by Gemini" doc; set
+`NEBOS_RETRO_MEETING` to pin it to a specific recurring meeting by title.
 
 Env: see `.env.example` (HAE base/token or connector JSON; `FI_EMAIL` /
 `FI_PASSWORD` for Bella; `NEB_COMPOSIO_MCP_API_KEY` for the NEBOS + meetings
