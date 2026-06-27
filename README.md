@@ -7,11 +7,13 @@ One Slack DM, led by the day's priorities and followed by personal trends:
 
 - **Top 5 — NEBOS** 🎯 — the day's most important things to handle, pulled from
   the systems behind NEBOS (Team Nebula's central context hub): open Linear
-  issues assigned to you (action items / to-dos) and external client emails in
-  Gmail still awaiting your reply. The two streams are merged, ranked by a
-  simple urgency score (priority, overdue, and how long someone's been waiting),
-  and the top five are shown — nothing else. Reached through the same Composio
-  gateway as the meetings section.
+  issues assigned to you (action items / to-dos) and client emails in Gmail
+  still awaiting your reply. "Client" is an allowlist of domains
+  (`NEBOS_CLIENT_DOMAINS`, default `rivus.mx,newcalgon.net,rs21.io`) so vendor
+  and cold-outreach mail doesn't crowd the list. The two streams are merged,
+  ranked by a simple urgency score (priority, overdue, and how long someone's
+  been waiting), and the top five are shown — nothing else. Reached through the
+  same Composio gateway as the meetings section.
 - **You** — five plain-English lines from live Health Auto Export (HAE) data:
   activity & exercise, lung health (blood oxygen), stress signals (HRV +
   resting HR), sleep sufficiency, and an illness watch that fires when

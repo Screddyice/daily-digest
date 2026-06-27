@@ -29,11 +29,27 @@ TOP_N = 5
 EMAIL_LOOKBACK_DAYS = 21
 # The org's own domain — internal mail isn't a "client email to get back to".
 COMPANY_DOMAIN = os.environ.get("NEBOS_COMPANY_DOMAIN", "teamnebula.ai")
+# Client domains — only mail from these counts as a "client email to reply to".
+# Seeded with Team Nebula's known clients (Rivus, Newcalgon, RS21); override with
+# NEBOS_CLIENT_DOMAINS as the client list grows (e.g. add Volt Truck's domain).
+_DEFAULT_CLIENT_DOMAINS = "rivus.mx,newcalgon.net,rs21.io"
+
+
+def client_domains() -> set[str]:
+    """Allowlist of client email domains, from NEBOS_CLIENT_DOMAINS (comma-sep).
+    Empty → fall back to 'any external sender' (COMPANY_DOMAIN excluded)."""
+    raw = os.environ.get("NEBOS_CLIENT_DOMAINS", _DEFAULT_CLIENT_DOMAINS)
+    return {d.strip().lower() for d in raw.split(",") if d.strip()}
 # Senders that are automated, not a person awaiting your reply.
 _AUTOMATED = re.compile(
     r"no[-_]?reply|noreply|do[-_]?not[-_]?reply|notifications?@|mailer-daemon"
     r"|gemini-notes@|calendar-notification@|@google\.com|@docs\.google\.com"
     r"|postmaster@|@link\.com|@bounce|@em\.|@mailchimp|@sendgrid",
+    re.IGNORECASE)
+# Calendar RSVP / invite auto-subjects (EN + ES) — not a reply you owe anyone.
+_CALENDAR_NOISE = re.compile(
+    r"^(accepted|declined|tentative|invitation|updated invitation|canceled|cancelled"
+    r"|aceptado|rechazado|provisional|invitaci[oó]n):",
     re.IGNORECASE)
 
 # Open issues assigned to me, with the fields needed to rank them.
@@ -147,12 +163,25 @@ def _sender_name_org(from_header: str) -> tuple[str, str | None]:
     return name, org
 
 
-def parse_client_emails(resp: dict, today: date) -> list[dict]:
-    """Threads whose latest message is an external person awaiting your reply.
+def _domain_of(from_header: str) -> str:
+    m = re.search(r"@([\w.-]+)", from_header or "")
+    return m.group(1).lower().rstrip(">").strip() if m else ""
 
-    Internal mail (your own domain) and automated senders are dropped — the
-    point is client emails *you* need to get back to.
+
+def _is_client(domain: str, domains: set[str]) -> bool:
+    """domain matches the allowlist exactly or as a subdomain (mail.rivus.mx)."""
+    return any(domain == d or domain.endswith("." + d) for d in domains)
+
+
+def parse_client_emails(resp: dict, today: date, *, domains: set[str] | None = None) -> list[dict]:
+    """Threads whose latest message is a client awaiting your reply.
+
+    A message counts only when it's the latest in its thread, inbound (you
+    didn't send it), from a non-automated sender, and from a client domain.
+    `domains` is the client allowlist; when empty, any external (non-company)
+    sender qualifies — drops back to the pre-allowlist behavior.
     """
+    domains = client_domains() if domains is None else domains
     threads = _walk(resp, "threads") or []
     out = []
     for t in threads:
@@ -167,11 +196,17 @@ def parse_client_emails(resp: dict, today: date) -> list[dict]:
         frm = _header(latest, "from")
         if not frm or _AUTOMATED.search(frm):
             continue
-        if COMPANY_DOMAIN.lower() in frm.lower():   # internal, not a client
+        domain = _domain_of(frm)
+        if domains:
+            if not _is_client(domain, domains):     # not a client — skip
+                continue
+        elif COMPANY_DOMAIN.lower() in frm.lower():  # no allowlist: drop internal
+            continue
+        subject = (_header(latest, "subject") or "(no subject)").strip()
+        if _CALENDAR_NOISE.match(subject):   # calendar RSVP/invite, not a reply owed
             continue
         name, org = _sender_name_org(frm)
-        subject = (_header(latest, "subject") or "(no subject)").strip()
-        subject = re.sub(r"^(re|fw|fwd):\s*", "", subject, flags=re.IGNORECASE)
+        subject = re.sub(r"^(?:(?:re|fw|fwd)\s*:\s*)+", "", subject, flags=re.IGNORECASE)
         age_days = (today - date.fromtimestamp(int(latest["internalDate"]) / 1000)).days \
             if latest.get("internalDate") else 99
         out.append({"name": name, "org": org, "subject": subject,
@@ -195,7 +230,7 @@ def render_section(lines: list[str]) -> str:
 
 
 def build_section(today: date | None = None, *, env: dict | None = None,
-                  call=None) -> str | None:
+                  call=None, domains: set[str] | None = None) -> str | None:
     """The Top-5 section, or None when there's nothing to show — Composio not
     configured, both sources unreachable, or no open items / client emails."""
     today = today or date.today()
@@ -215,7 +250,7 @@ def build_section(today: date | None = None, *, env: dict | None = None,
     try:
         emails = parse_client_emails(call("GMAIL_LIST_THREADS",
                                           {"query": GMAIL_QUERY, "max_results": 25,
-                                           "verbose": True}), today)
+                                           "verbose": True}), today, domains=domains)
         candidates += [_email_candidate(e) for e in emails]
     except Exception as exc:
         logger.warning("nebos: gmail fetch failed: %s", exc)
