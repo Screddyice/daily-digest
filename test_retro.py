@@ -2,9 +2,12 @@
 
     python3 -m unittest test_retro -v
 
-Network is injected. Covers Gemini-notes parsing (summary + action items),
-the Call section render, composition, and graceful degradation.
+Network is injected. Covers NEBOS meeting decoding (JSON + SSE), the two date
+formats NEBOS emits, today-window filtering, summary/next-steps parsing of both
+prose and bulleted summaries, the Calls render, composition, and graceful
+degradation.
 """
+import json
 import unittest
 from datetime import date
 
@@ -12,103 +15,210 @@ import retro
 
 TODAY = date(2026, 6, 27)
 
-NOTES_TEXT = """Daily Standup
-Invited @Ian Kiku @Shawn Reddy
-Meeting records Transcript
-Summary
-The team reviewed client project status and financial milestones while refining technical infrastructure.
+# A bulleted NEBOS summary with an explicit follow-up bullet.
+BULLET_SUMMARY = (
+    "- **Sales Pipeline:** Four-stage CRM manages 117 active leads.\n"
+    "- **Pricing Workflow:** 1,265 quotes tracked with cost analytics.\n"
+    "- **Next Steps & Collaboration:** Data sharing and architecture planning underway."
+)
+# A prose summary (no bullets) — VoltTruck-style.
+PROSE_SUMMARY = ("VoltTruck wants AI on the sales side. They requested a phased "
+                 "tiered proposal and a deck for the commercial director.")
 
-Standardizing Workflow Processes
-A 90-day sprint framework was adopted to track commitments.
-Decisions
-Aligned
-Client meeting recap automation
-Next steps
-- [Ibrahim Zia] Send Design Options: Distribute the created design options to the team.
-- [Shawn Reddy] Draft Client Proposal: Draft a proposal for the client.
-- [The group] Reschedule Discussion: Move the OKR discussion to Thursday.
-Details
-Firebase project payment was discussed.
-"""
 
-DOC_NAME = "Daily Standup - 2026/06/26 10:45 PDT - Notes by Gemini"
+def meeting(title, date_field, summary, attendees):
+    return {"title": title, "date": date_field, "summary": summary, "attendees": attendees}
 
-FIND_RESPONSE = {"data": {"files": [
-    {"id": "DOC1", "name": DOC_NAME, "modifiedTime": "2026-06-26T19:13:13Z"}]}}
-DOC_RESPONSE = {"data": {"plain_text": NOTES_TEXT}}
+
+# Jun 27 / Jun 24 in both NEBOS date shapes.
+JUN27_ISO = "2026-06-27T18:09:00.000Z"
+JUN24_ISO = "2026-06-24T18:09:00.000Z"
+
+DISCOVERY = meeting("Discovery (Carlos)", JUN27_ISO, BULLET_SUMMARY,
+                    ["maira@teamnebula.ai", "shawn@teamnebula.ai", "jorge.castro@rivus.mx"])
+VOLT = meeting("VoltTruck Discovery", JUN27_ISO, PROSE_SUMMARY,
+               ["shawn@teamnebula.ai", "monica@volttruck.com"])
+STALE = meeting("Old Standup", JUN24_ISO, "- **X:** y", ["shawn@teamnebula.ai"])
+
+
+def mcp_envelope(payload) -> str:
+    """Wrap a tool payload the way NEBOS does (JSON-RPC, text-wrapped)."""
+    return json.dumps({"jsonrpc": "2.0", "id": "1",
+                       "result": {"content": [{"type": "text", "text": json.dumps(payload)}]}})
+
+
+class DecodeTests(unittest.TestCase):
+    def test_decode_plain_json(self):
+        self.assertEqual(retro._decode_mcp(mcp_envelope([{"a": 1}])), [{"a": 1}])
+
+    def test_decode_sse(self):
+        sse = "event: message\ndata: " + mcp_envelope([{"a": 2}]) + "\n\n"
+        self.assertEqual(retro._decode_mcp(sse), [{"a": 2}])
+
+    def test_decode_garbage_is_none(self):
+        self.assertIsNone(retro._decode_mcp("not json at all"))
+
+
+class DateTests(unittest.TestCase):
+    def test_iso_string_parsed(self):
+        dt = retro.meeting_dt(JUN24_ISO)
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.date(), date(2026, 6, 24))
+
+    def test_seconds_object_parsed(self):
+        dt = retro.meeting_dt({"_seconds": 1782493200})  # mid-2026 UTC
+        self.assertIsNotNone(dt)
+
+    def test_bad_date_is_none(self):
+        self.assertIsNone(retro.meeting_dt("nonsense"))
+        self.assertIsNone(retro.meeting_dt({}))
+        self.assertIsNone(retro.meeting_dt(None))
 
 
 class ParseTests(unittest.TestCase):
-    def test_summary_is_first_line_under_header(self):
-        s = retro.parse_summary(NOTES_TEXT)
-        self.assertTrue(s.startswith("The team reviewed client project status"))
-        self.assertLessEqual(len(s), retro.SUMMARY_MAX_CHARS + 1)
+    def test_bulleted_summary_splits_bullets(self):
+        b = retro.summary_bullets(BULLET_SUMMARY)
+        self.assertEqual(len(b), 3)
+        self.assertTrue(b[0].startswith("**Sales Pipeline"))
 
-    def test_summary_missing_returns_none(self):
-        self.assertIsNone(retro.parse_summary("No headers here\njust text"))
+    def test_prose_summary_is_single_element(self):
+        b = retro.summary_bullets(PROSE_SUMMARY)
+        self.assertEqual(len(b), 1)
 
-    def test_action_items_owner_and_task(self):
-        items = retro.parse_action_items(NOTES_TEXT)
-        self.assertEqual(items[0], ("Ibrahim", "Send Design Options"))
-        self.assertEqual(items[1], ("Shawn", "Draft Client Proposal"))
-        self.assertEqual(items[2], ("Team", "Reschedule Discussion"))  # "The group" -> Team
+    def test_next_steps_extracted_from_label(self):
+        rest, nxt = retro.split_next_steps(retro.summary_bullets(BULLET_SUMMARY))
+        self.assertEqual(len(rest), 2)
+        self.assertIsNotNone(nxt)
+        self.assertIn("Data sharing", nxt)
 
-    def test_action_items_stop_at_next_section(self):
-        # "Details" follows Next steps; its content must not leak in as an item
-        items = retro.parse_action_items(NOTES_TEXT)
-        self.assertEqual(len(items), 3)
-        self.assertNotIn("Firebase", " ".join(t for _, t in items))
+    def test_no_next_steps_returns_none(self):
+        rest, nxt = retro.split_next_steps(retro.summary_bullets(PROSE_SUMMARY))
+        self.assertIsNone(nxt)
+        self.assertEqual(len(rest), 1)
+
+    def test_partners_external_only(self):
+        self.assertEqual(retro.call_partners(DISCOVERY["attendees"]), "Rivus")
+        self.assertEqual(retro.call_partners(["shawn@teamnebula.ai", "x@aiadvantageagency.co"]), "")
 
 
 class RenderTests(unittest.TestCase):
-    def test_render_has_label_summary_and_actions(self):
-        out = retro.render_call_section(
-            DOC_NAME, "Reviewed status and milestones.",
-            [("Ibrahim", "Send Design Options"), ("Shawn", "Draft Client Proposal")])
-        self.assertIn("📞 Daily Standup", out)                 # label off the doc name
-        self.assertIn("• Summary: Reviewed status and milestones.", out)
-        self.assertIn("• Action items: Ibrahim: Send Design Options; Shawn: Draft Client Proposal", out)
+    def test_one_call_has_title_time_summary_next(self):
+        m = {**DISCOVERY, "_dt": retro.meeting_dt(JUN27_ISO)}
+        out = retro.render_one_call(m)
+        self.assertIn("*Discovery (Carlos)*", out)
+        self.assertIn("Rivus", out)
+        self.assertIn("• ", out)
+        self.assertIn("• Next:", out)
 
-    def test_render_caps_action_items_with_overflow(self):
-        items = [(f"P{i}", f"Task {i}") for i in range(9)]
-        out = retro.render_call_section(DOC_NAME, "s", items)
-        self.assertIn(f"+{9 - retro.ACTIONS_MAX_ITEMS} more", out)
+    def test_prose_call_renders_summary_no_next(self):
+        m = {**VOLT, "_dt": retro.meeting_dt(JUN27_ISO)}
+        out = retro.render_one_call(m)
+        self.assertIn("VoltTruck", out)
+        self.assertNotIn("• Next:", out)
+
+    def test_calls_section_caps_and_overflows(self):
+        many = [{**VOLT, "_dt": retro.meeting_dt(JUN27_ISO)} for _ in range(retro.CALLS_MAX + 2)]
+        out = retro.render_calls_section(many)
+        self.assertIn("📞 Calls", out)
+        self.assertIn("+2 more calls today", out)
 
 
 class BuildSectionTests(unittest.TestCase):
-    def _call(self, slug, args):
-        return {retro.FIND_SLUG: FIND_RESPONSE, retro.DOC_SLUG: DOC_RESPONSE}[slug]
+    def _call(self, meetings):
+        return lambda tool, args: meetings
 
-    def test_no_gateway_returns_none(self):
-        self.assertIsNone(retro.build_call_section(TODAY, env={}))
+    def test_no_token_returns_none(self):
+        self.assertIsNone(retro.build_calls_section(TODAY, env={}))
 
-    def test_call_section_end_to_end(self):
-        out = retro.build_call_section(TODAY, env={}, call=self._call)
-        self.assertIn("📞 Daily Standup", out)
-        self.assertIn("Summary:", out)
-        self.assertIn("Ibrahim: Send Design Options", out)
+    def test_today_filter_drops_stale(self):
+        out = retro.build_calls_section(TODAY, env={}, call=self._call([DISCOVERY, STALE]))
+        self.assertIn("Discovery (Carlos)", out)
+        self.assertNotIn("Old Standup", out)
 
-    def test_no_notes_returns_none(self):
-        empty = lambda slug, args: {"data": {"files": []}}
-        self.assertIsNone(retro.build_call_section(TODAY, env={}, call=empty))
+    def test_no_calls_today_returns_none(self):
+        self.assertIsNone(retro.build_calls_section(TODAY, env={}, call=self._call([STALE])))
 
     def test_fetch_error_degrades_to_none(self):
-        def boom(slug, args):
-            raise OSError("drive down")
-        self.assertIsNone(retro.build_call_section(TODAY, env={}, call=boom))
+        def boom(tool, args):
+            raise OSError("nebos down")
+        self.assertIsNone(retro.build_calls_section(TODAY, env={}, call=boom))
+
+    def test_non_list_payload_returns_none(self):
+        self.assertIsNone(retro.build_calls_section(TODAY, env={}, call=lambda t, a: {"error": "x"}))
+
+
+class TodayTests(unittest.TestCase):
+    def test_retro_date_override(self):
+        import os
+        os.environ["RETRO_DATE"] = "2026-06-24"
+        try:
+            self.assertEqual(retro._today(), date(2026, 6, 24))
+        finally:
+            del os.environ["RETRO_DATE"]
+
+    def test_bad_retro_date_falls_back_to_now(self):
+        import os
+        os.environ["RETRO_DATE"] = "not-a-date"
+        try:
+            self.assertIsInstance(retro._today(), date)
+        finally:
+            del os.environ["RETRO_DATE"]
+
+
+class CallRecordTests(unittest.TestCase):
+    def test_record_fields(self):
+        m = {**DISCOVERY, "_dt": retro.meeting_dt(JUN27_ISO)}
+        r = retro.call_record(m)
+        self.assertEqual(r["title"], "Discovery (Carlos)")
+        self.assertEqual(r["who"], "Rivus")
+        self.assertTrue(r["label_line"].startswith("*Discovery (Carlos)*"))
+        self.assertTrue(r["summary"])
+        self.assertIn("Data sharing", r["next_steps"])
+
+    def test_prose_record_has_no_next_steps(self):
+        r = retro.call_record({**VOLT, "_dt": retro.meeting_dt(JUN27_ISO)})
+        self.assertEqual(r["next_steps"], "")
+        self.assertTrue(r["summary"])
+
+    def test_section_bullets_extracts_only_bullets(self):
+        section = "🎯 Top 5 — NEBOS\n\n• [TMNS-82] Follow up (High)\n• Reply to X — y"
+        self.assertEqual(retro._section_bullets(section),
+                         ["• [TMNS-82] Follow up (High)", "• Reply to X — y"])
+        self.assertEqual(retro._section_bullets(None), [])
+
+
+class BuildDataTests(unittest.TestCase):
+    def _call(self, meetings):
+        return lambda tool, args: meetings
+
+    def test_data_shape_and_counts(self):
+        data = retro.build_retro_data(
+            TODAY, env={}, call=self._call([DISCOVERY, VOLT, STALE]),
+            nebos_section="🎯 Top 5 — NEBOS\n\n• Reply to Luis (Rivus) — Carlos")
+        self.assertEqual(data["label"], "Saturday, June 27")
+        self.assertEqual(data["call_count"], 2)              # STALE (Jun 24) filtered out
+        self.assertEqual(data["top5"], ["• Reply to Luis (Rivus) — Carlos"])
+        self.assertEqual({c["title"] for c in data["calls"]},
+                         {"Discovery (Carlos)", "VoltTruck Discovery"})
+
+    def test_no_token_no_calls(self):
+        data = retro.build_retro_data(TODAY, env={}, nebos_section=None)
+        self.assertEqual(data["call_count"], 0)
+        self.assertEqual(data["calls"], [])
+        self.assertEqual(data["top5"], [])
 
 
 class BuildRetroTests(unittest.TestCase):
-    def test_retro_leads_with_nebos_then_call(self):
+    def test_retro_leads_with_nebos_then_calls(self):
         out = retro.build_retro(
             TODAY,
             nebos_section="🎯 Top 5 — NEBOS\n\n• [TMNS-82] Follow up (High)",
-            call_section="📞 Daily Standup\n\n• Summary: x\n• Action items: y")
+            calls_section="📞 Calls\n\n*Discovery* (1:00 PM)")
         self.assertIn("🌙 Call Retro — Saturday, June 27, 2026", out)
-        self.assertLess(out.index("🎯 Top 5 — NEBOS"), out.index("📞 Daily Standup"))
+        self.assertLess(out.index("🎯 Top 5 — NEBOS"), out.index("📞 Calls"))
 
     def test_empty_parts_are_dropped(self):
-        out = retro.build_retro(TODAY, nebos_section=None, call_section=None)
+        out = retro.build_retro(TODAY, nebos_section=None, calls_section=None)
         self.assertIn("🌙 Call Retro", out)
         self.assertNotIn("🎯", out)
         self.assertNotIn("📞", out)
