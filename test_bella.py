@@ -8,12 +8,31 @@ accumulation, and graceful degradation when Fi creds are absent.
 import json
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 import bella
 
 TODAY = date(2026, 6, 12)
+
+
+class _FakeResp:
+    """Minimal urlopen stand-in: usable as a context manager and .read()/.close()."""
+    def __init__(self, text: str):
+        self._text = text
+
+    def read(self):
+        return self._text.encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def close(self):
+        pass
 
 PETS_RESPONSE = {
     "data": {"currentUser": {"userHouseholds": [{"household": {"pets": [
@@ -286,6 +305,87 @@ class BuildSectionTests(unittest.TestCase):
                                       history_path=path, profile_path=Path(tmp) / "p.json",
                                       gql=fake_gql, pet_name="Bella")
             self.assertIsNone(out)
+
+
+class GistHistoryStoreTests(unittest.TestCase):
+    """Durable (gist-backed) history so steps/behavior trends survive an
+    ephemeral sandbox that wipes the local file each run."""
+
+    def test_gist_load_parses_file_content(self):
+        payload = {"files": {bella.GIST_FILE: {"content": json.dumps({"steps": {"2026-06-12": 14398.0}})}}}
+        with mock.patch.object(bella.urllib.request, "urlopen",
+                               return_value=_FakeResp(json.dumps(payload))):
+            self.assertEqual(bella.gist_load("gid", "tok"), {"steps": {"2026-06-12": 14398.0}})
+
+    def test_gist_load_missing_file_is_empty(self):
+        with mock.patch.object(bella.urllib.request, "urlopen",
+                               return_value=_FakeResp(json.dumps({"files": {}}))):
+            self.assertEqual(bella.gist_load("gid", "tok"), {})
+
+    def test_gist_save_sends_patch_with_history(self):
+        seen = {}
+
+        def fake_urlopen(req, timeout=30.0):
+            seen["method"] = req.get_method()
+            seen["url"] = req.full_url
+            seen["body"] = json.loads(req.data.decode())
+            return _FakeResp("{}")
+
+        with mock.patch.object(bella.urllib.request, "urlopen", side_effect=fake_urlopen):
+            bella.gist_save("gid", "tok", {"steps": {"2026-06-12": 1.0}})
+        self.assertEqual(seen["method"], "PATCH")
+        self.assertIn("gists/gid", seen["url"])
+        content = seen["body"]["files"][bella.GIST_FILE]["content"]
+        self.assertEqual(json.loads(content), {"steps": {"2026-06-12": 1.0}})
+
+    def test_history_store_uses_gist_when_configured(self):
+        env = {"BELLA_HISTORY_GIST": "gid", "GITHUB_TOKEN": "tok"}
+        with mock.patch.object(bella, "gist_load", return_value={"x": 1}) as gl, \
+                mock.patch.object(bella, "gist_save") as gs:
+            load, save = bella._history_store(env, Path("/nope"))
+            self.assertEqual(load(), {"x": 1})
+            save({"y": 2})
+            gl.assert_called_once()
+            gs.assert_called_once()
+
+    def test_history_store_falls_back_to_local_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "h.json"
+            load, save = bella._history_store({}, path)
+            save({"steps": {"2026-06-12": 9.0}})
+            self.assertEqual(load(), {"steps": {"2026-06-12": 9.0}})
+
+    def test_gist_store_failure_does_not_sink_section(self):
+        env = {"BELLA_HISTORY_GIST": "gid", "GITHUB_TOKEN": "tok"}
+        with mock.patch.object(bella, "gist_load", side_effect=RuntimeError("502")), \
+                mock.patch.object(bella, "gist_save", side_effect=RuntimeError("502")):
+            load, save = bella._history_store(env, Path("/nope"))
+            self.assertEqual(load(), {})   # load degrades to empty
+            save({"y": 2})                 # save swallows the error
+
+    def test_build_section_round_trips_through_gist(self):
+        responses = {"pets": PETS_RESPONSE, "steps": STEPS_RESPONSE,
+                     "rest": REST_RESPONSE, "trends": TRENDS_RESPONSE,
+                     "profile": PROFILE_RESPONSE}
+
+        def fake_gql(kind, **kw):
+            return responses[kind]
+
+        # Seed the gist with 17 prior days so a trend is readable; build_section
+        # must add today's reading and save the merged history back to the gist.
+        seed = {"steps": {(TODAY - timedelta(days=i)).isoformat(): 8000.0 for i in range(1, 18)}}
+        saved = {}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(bella, "gist_load", return_value=json.loads(json.dumps(seed))), \
+                mock.patch.object(bella, "gist_save", side_effect=lambda g, t, h: saved.update(h)):
+            out = bella.build_section(
+                TODAY,
+                env={"FI_EMAIL": "x", "FI_PASSWORD": "y",
+                     "BELLA_HISTORY_GIST": "gid", "GITHUB_TOKEN": "tok"},
+                profile_path=Path(tmp) / "p.json", gql=fake_gql, pet_name="Bella")
+        self.assertIn("🐕 Bella", out)
+        self.assertEqual(saved["steps"][TODAY.isoformat()], 8421.0)   # today's reading persisted
+        self.assertEqual(saved["eating_events"][TODAY.isoformat()], 3.0)
 
 
 if __name__ == "__main__":

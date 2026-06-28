@@ -33,6 +33,12 @@ FI_API = "https://api.tryfi.com"
 DEFAULT_HISTORY = Path.home() / ".daily-digest" / "bella_history.json"
 DEFAULT_PROFILE = Path.home() / ".daily-digest" / "bella_profile.json"
 HISTORY_KEEP_DAYS = 60
+# Steps and behavior-event counts accumulate one reading per run, so they need a
+# store that survives between runs. On a durable host that's the local file
+# above; in an ephemeral cloud sandbox the filesystem is wiped each run, so set
+# BELLA_HISTORY_GIST (a secret gist id) + GITHUB_TOKEN and the history round-trips
+# through the gist instead. Sleep is unaffected (Fi serves its history live).
+GIST_FILE = "bella_history.json"
 # Fi doesn't expose coat color; Shawn's Bella is a chocolate Lab.
 DEFAULT_COLOR = os.environ.get("FI_PET_COLOR", "chocolate")
 
@@ -271,14 +277,82 @@ def load_history(path: Path) -> dict:
         return {}
 
 
+def save_history(path: Path, hist: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(hist, indent=0, sort_keys=True))
+
+
+def _record(hist: dict, metric: str, day: str, value: float) -> None:
+    hist.setdefault(metric, {})[day] = value
+
+
+def _prune(hist: dict) -> None:
+    """Keep only the most recent HISTORY_KEEP_DAYS readings per metric."""
+    for series in hist.values():
+        for stale in sorted(series)[:-HISTORY_KEEP_DAYS]:
+            del series[stale]
+
+
 def update_history(path: Path, metric: str, day: str, value: float) -> None:
     hist = load_history(path)
-    hist.setdefault(metric, {})[day] = value
+    _record(hist, metric, day, value)
     series = hist[metric]
     for stale in sorted(series)[:-HISTORY_KEEP_DAYS]:
         del series[stale]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(hist, indent=0, sort_keys=True))
+    save_history(path, hist)
+
+
+# --- durable (gist-backed) history, for ephemeral sandboxes --------------------
+def _gist_url(gist_id: str) -> str:
+    return f"https://api.github.com/gists/{gist_id}"
+
+
+def _gist_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+            "User-Agent": "daily-digest"}
+
+
+def gist_load(gist_id: str, token: str, *, timeout: float = 30.0) -> dict:
+    """The history dict stored in the gist's bella_history.json (—> {} if empty/new)."""
+    req = urllib.request.Request(_gist_url(gist_id), headers=_gist_headers(token))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        obj = json.load(r)
+    content = ((obj.get("files") or {}).get(GIST_FILE) or {}).get("content") or "{}"
+    try:
+        return json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def gist_save(gist_id: str, token: str, hist: dict, *, timeout: float = 30.0) -> None:
+    body = json.dumps({"files": {GIST_FILE: {"content": json.dumps(hist, sort_keys=True)}}}).encode()
+    req = urllib.request.Request(_gist_url(gist_id), data=body, method="PATCH",
+                                 headers={**_gist_headers(token), "Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=timeout).close()
+
+
+def _history_store(env: dict, history_path: Path):
+    """(load, save) bound to the configured store: the gist when BELLA_HISTORY_GIST
+    + a token are set (ephemeral sandbox), else the local file. The gist round-trips
+    history across runs that would otherwise lose the local file."""
+    gist_id = env.get("BELLA_HISTORY_GIST")
+    token = env.get("GITHUB_TOKEN") or env.get("BELLA_HISTORY_TOKEN")
+    if gist_id and token:
+        def load():
+            try:
+                return gist_load(gist_id, token)
+            except Exception as exc:  # a store hiccup must not sink Bella's section
+                logger.warning("bella: gist history load failed: %s", exc)
+                return {}
+
+        def save(hist):
+            try:
+                gist_save(gist_id, token, hist)
+            except Exception as exc:
+                logger.warning("bella: gist history save failed: %s", exc)
+
+        return load, save
+    return (lambda: load_history(history_path)), (lambda hist: save_history(history_path, hist))
 
 
 # ---------------------------------------------------------------- composition
@@ -318,13 +392,18 @@ def build_section(today: date | None = None, *, env: dict | None = None,
         logger.warning("bella: fi fetch failed: %s", exc)
         return None
 
+    # One load + one save per run (the store may be a remote gist). Steps and
+    # behavior counts accumulate; sleep is a fresh multi-day window from Fi.
+    load, save = _history_store(env, history_path)
+    hist = load()
     if steps_today is not None:
-        update_history(history_path, "steps", today.isoformat(), steps_today)
+        _record(hist, "steps", today.isoformat(), steps_today)
     for day, minutes in sleep.items():  # the feed is shallow; accumulate for depth
-        update_history(history_path, "sleep", day, minutes)
+        _record(hist, "sleep", day, minutes)
     for key, value in behaviors_today.items():
-        update_history(history_path, key, today.isoformat(), value)
-    hist = load_history(history_path)
+        _record(hist, key, today.isoformat(), value)
+    _prune(hist)
+    save(hist)
     series = {k: hist.get(k, {}) for k in
               ("steps", "sleep", *{ek for ek, dk in TREND_KEYS.values() if ek},
                *{dk for ek, dk in TREND_KEYS.values() if dk})}
