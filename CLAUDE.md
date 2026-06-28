@@ -60,10 +60,11 @@ yesterday; `trends.has_fresh_data` / `STALE_AFTER_DAYS`) instead of showing a st
 `⚠️ hasn't synced` warning. Applies to You (HAE) and Bella (Fi). `bella.build_section`
 and `nebos.build_section` return `None` when unconfigured/unreachable/empty;
 `morning.build_digest` uses `_UNSET` sentinels so `None` means *omit*, not *re-fetch*.
-Bella goes further: even when data is fresh, if no metric has enough history to
-read a real trend (every line would be "baseline building" / "not enough history"),
-`bella.build_section` returns `None` via `trends.has_readable_signal` — so Bella is
-not mentioned at all unless there's something meaningful to say.
+Bella goes further: `render_pet_section` shows only metrics that have a readable
+trend — single-reading "baseline building" / "not enough history" lines are
+suppressed entirely. And if NO metric qualifies, `bella.build_section` returns
+`None` via `trends.has_readable_signal`, so Bella isn't mentioned at all unless
+there's something meaningful to say.
 
 ## Env vars
 `NEB_COMPOSIO_MCP_API_KEY` (+ `NEB_COMPOSIO_MCP_USER_ID`) for the Top-5 section,

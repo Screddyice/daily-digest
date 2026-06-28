@@ -237,37 +237,32 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
     warning = _stale_warning(f"{name}'s collar", series, today)
     if warning:
         L += [warning, ""]
-    steps = series.get("steps", {})
-    t = direction(steps, today)
-    if not steps:
-        L.append("• Activity: no recent movement data from the collar.")
-    else:
+    # Only metrics with a readable trend are shown. "Not enough history" /
+    # "baseline building" first-reading lines are suppressed entirely, so Bella
+    # never lists filler — and the whole section is dropped upstream (via
+    # has_readable_signal) when nothing qualifies.
+    t = direction(series.get("steps", {}), today)
+    if t is not None:
         L.append({
             "up": "• Activity: trending up — moving more than her usual.",
             "down": "• Activity: trending down — moving less than her usual.",
             "steady": "• Activity: steady — right around her usual daily movement.",
-            None: "• Activity: not enough history yet to read a trend.",
         }[t])
-    sleep = series.get("sleep", {})
-    if sleep:
-        t = direction(sleep, today)
+    t = direction(series.get("sleep", {}), today)
+    if t is not None:
         L.append({
             "up": "• Sleep: resting more than usual the past few days.",
             "down": "• Sleep: resting less than usual — could mean restlessness.",
             "steady": "• Sleep: normal — her usual rest pattern.",
-            None: "• Sleep: not enough history yet to read a trend.",
         }[t])
 
     # ---- Series 3+ AI behaviors: real event count + health-flavored direction ----
     for key, label, up, down, steady in PET_BEHAVIORS:
         d = series.get(key, {})
-        if not d:
+        t = direction(d, today)
+        if t is None:  # no readable trend yet — skip rather than show filler
             continue
         count = _event_count(d)
-        t = direction(d, today)
-        if t is None:  # first reading — tracked, just nothing to compare against yet
-            L.append(f"• {label}: {count} today — tracking started, baseline building.")
-            continue
         phrasing = {"up": up, "down": down, "steady": steady}[t]
         L.append(f"• {label}: {count} today, {phrasing}")
     return "\n".join(L)

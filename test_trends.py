@@ -276,23 +276,20 @@ class BellaSectionTests(unittest.TestCase):
         self.assertNotIn("Eating", out)
         self.assertNotIn("Barking", out)
 
-    def test_bella_behavior_with_single_reading_shows_count_and_baseline(self):
-        """Day one of behavior tracking: one reading can't give a direction,
-        but the line must not vanish — show today's count and say the baseline
-        is still building."""
+    def test_bella_single_reading_behaviors_are_suppressed(self):
+        """Day one of a behavior: one reading can't give a direction, so the line
+        is suppressed entirely — no "baseline building" filler. A metric with
+        real history (steps) still renders."""
         series = {
             "steps": _series(TODAY, 17, 8000),
             "eating_events": {TODAY.isoformat(): 3},
             "licking_events": {TODAY.isoformat(): 5},
         }
         out = trends.render_pet_section("Bella", series, TODAY)
-        eat = next(l for l in out.splitlines() if "Eating" in l)
-        self.assertIn("baseline", eat.lower())
-        self.assertIn("3 event", eat)          # count shown even on day one
-        lick = next(l for l in out.splitlines() if "Licking" in l)
-        self.assertIn("baseline", lick.lower())
-        self.assertIn("5 event", lick)
-        # steps (not selected for numbers) stays numberless
+        self.assertNotIn("Eating", out)        # single-reading behaviors omitted
+        self.assertNotIn("Licking", out)
+        self.assertNotIn("baseline", out.lower())
+        # the metric with real history still shows, and stays numberless
         act = next(l for l in out.splitlines() if "Activity" in l)
         self.assertNotRegex(act, r"\d")
 
