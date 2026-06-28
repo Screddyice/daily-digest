@@ -60,11 +60,6 @@ yesterday; `trends.has_fresh_data` / `STALE_AFTER_DAYS`) instead of showing a st
 `⚠️ hasn't synced` warning. Applies to You (HAE) and Bella (Fi). `bella.build_section`
 and `nebos.build_section` return `None` when unconfigured/unreachable/empty;
 `morning.build_digest` uses `_UNSET` sentinels so `None` means *omit*, not *re-fetch*.
-Bella goes further: `render_pet_section` shows only metrics that have a readable
-trend — single-reading "baseline building" / "not enough history" lines are
-suppressed entirely. And if NO metric qualifies, `bella.build_section` returns
-`None` via `trends.has_readable_signal`, so Bella isn't mentioned at all unless
-there's something meaningful to say.
 
 ## Env vars
 `NEB_COMPOSIO_MCP_API_KEY` (+ `NEB_COMPOSIO_MCP_USER_ID`) for the Top-5 section,
@@ -92,8 +87,11 @@ it never crashes the digest.
 ```bash
 DRY_RUN=1 python3 morning.py
 DRY_RUN=1 python3 retro.py
-python3 -m unittest discover -p 'test_*.py'   # currently 189 tests, all passing
+python3 -m unittest discover -p 'test_*.py'   # currently 184 tests, all passing
 ```
+
+## Claude routine behavior
+Do **not** send a `PushNotification` at the end of a morning digest run. The digest posts itself to Slack — that is the notification. Only notify via `PushNotification` if the script crashes or exits non-zero.
 
 ## Deployment = Claude routines (NOT this repo's CI)
 The live **Daily Digest** and **Call Retro** are **Claude app routines**
