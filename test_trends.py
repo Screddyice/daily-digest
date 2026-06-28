@@ -316,5 +316,26 @@ class BellaSectionTests(unittest.TestCase):
         self.assertIn("⚠️", out)
 
 
+class ReadableSignalTests(unittest.TestCase):
+    """has_readable_signal — True only when some metric has enough history for a
+    real trend; drives "drop the pet section entirely when it's all filler"."""
+
+    def test_true_when_a_metric_has_two_plus_readings(self):
+        # two days of sleep is enough for a previous-vs-latest direction
+        series = {"sleep": {"2026-06-11": 700.0, "2026-06-12": 500.0}}
+        self.assertTrue(trends.has_readable_signal(series, TODAY))
+
+    def test_false_when_every_metric_has_one_reading(self):
+        series = {
+            "steps": {"2026-06-12": 8421.0},
+            "sleep": {"2026-06-12": 480.0},
+            "eating_events": {"2026-06-12": 3.0},
+        }
+        self.assertFalse(trends.has_readable_signal(series, TODAY))
+
+    def test_false_when_series_empty(self):
+        self.assertFalse(trends.has_readable_signal({"steps": {}, "sleep": {}}, TODAY))
+
+
 if __name__ == "__main__":
     unittest.main()

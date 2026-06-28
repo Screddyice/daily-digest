@@ -60,6 +60,10 @@ yesterday; `trends.has_fresh_data` / `STALE_AFTER_DAYS`) instead of showing a st
 `⚠️ hasn't synced` warning. Applies to You (HAE) and Bella (Fi). `bella.build_section`
 and `nebos.build_section` return `None` when unconfigured/unreachable/empty;
 `morning.build_digest` uses `_UNSET` sentinels so `None` means *omit*, not *re-fetch*.
+Bella goes further: even when data is fresh, if no metric has enough history to
+read a real trend (every line would be "baseline building" / "not enough history"),
+`bella.build_section` returns `None` via `trends.has_readable_signal` — so Bella is
+not mentioned at all unless there's something meaningful to say.
 
 ## Env vars
 `NEB_COMPOSIO_MCP_API_KEY` (+ `NEB_COMPOSIO_MCP_USER_ID`) for the Top-5 section,
@@ -87,7 +91,7 @@ it never crashes the digest.
 ```bash
 DRY_RUN=1 python3 morning.py
 DRY_RUN=1 python3 retro.py
-python3 -m unittest discover -p 'test_*.py'   # currently 184 tests, all passing
+python3 -m unittest discover -p 'test_*.py'   # currently 189 tests, all passing
 ```
 
 ## Deployment = Claude routines (NOT this repo's CI)

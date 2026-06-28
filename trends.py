@@ -107,6 +107,15 @@ def has_fresh_data(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     return age is not None and age < STALE_AFTER_DAYS
 
 
+def has_readable_signal(series: dict[str, dict[str, float]], today: date) -> bool:
+    """True when at least one metric has enough history to read an actual trend
+    (`direction` is not None), rather than only "baseline building" / "not enough
+    history" placeholders. When this is False the whole pet section would be
+    filler, so the digest drops it entirely instead of mentioning the pet."""
+    keys = ("steps", "sleep", *(k for k, *_ in PET_BEHAVIORS))
+    return any(direction(series.get(k, {}), today) is not None for k in keys)
+
+
 def _recent_mean(daily: dict[str, float]) -> float | None:
     recent, _ = _recent_and_baseline(daily)
     return sum(recent) / len(recent) if recent else None

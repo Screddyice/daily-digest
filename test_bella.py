@@ -275,6 +275,53 @@ class BuildSectionTests(unittest.TestCase):
             self.assertEqual(len(sleep), 12)  # 10 prior + Jun 11 + Jun 12 from the feed
             self.assertEqual(sleep["2026-06-12"], (28800 + 3600) / 60)
 
+    def test_only_baseline_filler_omits_the_whole_section(self):
+        """Data came in today, but with no prior history every metric is just a
+        "baseline building" placeholder — so Bella is dropped entirely (per
+        Shawn: don't mention Bella when there's nothing meaningful to say)."""
+        responses = {
+            "pets": PETS_RESPONSE,
+            "steps": STEPS_RESPONSE,                          # one reading (today)
+            "rest": {"data": {"pet": {"restSummaryFeed": {"restSummaries": [
+                {"start": "2026-06-12T07:00:00Z",
+                 "data": {"sleepAmounts": [{"type": "SLEEP", "duration": 28800}]}}]}}}},
+            "trends": TRENDS_RESPONSE,                         # one reading each behavior
+            "profile": PROFILE_RESPONSE,
+        }
+
+        def fake_gql(kind, **kw):
+            return responses[kind]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = bella.build_section(
+                TODAY, env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
+                history_path=Path(tmp) / "h.json", profile_path=Path(tmp) / "p.json",
+                gql=fake_gql, pet_name="Bella")
+            self.assertIsNone(out)
+
+    def test_one_real_trend_keeps_the_section(self):
+        """If even one metric has a readable trend (e.g. multi-day sleep), the
+        section stays — the single signal is worth showing."""
+        responses = {"pets": PETS_RESPONSE, "steps": {"data": {"pet": {}}},
+                     "rest": REST_RESPONSE, "trends": {"data": {"getPetHealthTrendsForPet": {
+                         "period": "DAY", "genericTrends": [], "behaviorTrends": []}}},
+                     "profile": PROFILE_RESPONSE}
+
+        def fake_gql(kind, **kw):
+            return responses[kind]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "h.json"
+            for i in range(1, 11):                 # 10 prior days of sleep -> readable
+                bella.update_history(path, "sleep", f"2026-06-{i:02d}", 700.0)
+            out = bella.build_section(
+                TODAY, env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
+                history_path=path, profile_path=Path(tmp) / "p.json",
+                gql=fake_gql, pet_name="Bella")
+            self.assertIsNotNone(out)
+            self.assertIn("🐕 Bella", out)
+            self.assertIn("Sleep:", out)
+
     def test_fi_error_omits_section_not_raises(self):
         """A fetch failure must not raise; with no new data, the section drops."""
         def boom(kind, **kw):
