@@ -70,7 +70,11 @@ for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (Nebula Assist),
 default `America/Los_Angeles`; set `Europe/London` etc. for where Shawn is based),
 `PENDING_LOOKBACK_DAYS` (optional, default 3 — window for the Morning Digest's
 `📋 Still pending` section; needs `NEBOS_MCP_TOKEN` like the Call Retro),
-HAE (`HAE_BASE_URL`/`HAE_READ_TOKEN` or connector JSON), `FI_EMAIL`/`FI_PASSWORD`.
+HAE (`HAE_BASE_URL`/`HAE_READ_TOKEN` or connector JSON), `FI_EMAIL`/`FI_PASSWORD`,
+`BELLA_HISTORY_GIST` (optional — a secret gist id; with `GITHUB_TOKEN` it makes
+Bella's step/behavior history round-trip through the gist so trends survive an
+ephemeral sandbox that wipes the local `~/.daily-digest` file; sleep is unaffected,
+served live by Fi).
 `DRY_RUN=1` prints instead of posting. `DIGEST_NO_ALERTS=1` skips the stateful
 Telegram alerts (the digest still posts) — set it in stateless runtimes like a
 cloud routine, where the edge-filter STATE_PATH can't persist between runs.
@@ -83,7 +87,7 @@ it never crashes the digest.
 ```bash
 DRY_RUN=1 python3 morning.py
 DRY_RUN=1 python3 retro.py
-python3 -m unittest discover -p 'test_*.py'   # currently 177 tests, all passing
+python3 -m unittest discover -p 'test_*.py'   # currently 184 tests, all passing
 ```
 
 ## Deployment = Claude routines (NOT this repo's CI)
