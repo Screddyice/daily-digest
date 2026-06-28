@@ -409,4 +409,9 @@ def build_section(today: date | None = None, *, env: dict | None = None,
                *{dk for ek, dk in TREND_KEYS.values() if dk})}
     if not trends.has_fresh_data(series, today):
         return None  # collar feed frozen or empty — drop the section
+    if not trends.has_readable_signal(series, today):
+        # Data arrived, but there's not yet enough history to read any trend —
+        # the section would be all "baseline building" filler. Per Shawn: if
+        # there's nothing meaningful from the collar, don't mention Bella at all.
+        return None
     return trends.render_pet_section(pet_name, series, today)
