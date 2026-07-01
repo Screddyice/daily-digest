@@ -23,17 +23,17 @@ import re
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 import morning
 import nebos
+import tzsafe
 
 logger = logging.getLogger(__name__)
 
 # Timezone for "today's calls" and the header date. The retro is Shawn's
 # end-of-day wrap, so the window is the calendar day in this zone. Override with
 # RETRO_TZ (e.g. Europe/London) wherever Shawn is based.
-RETRO_TZ = ZoneInfo(os.environ.get("RETRO_TZ", "America/Los_Angeles"))
+RETRO_TZ = tzsafe.resolve(os.environ.get("RETRO_TZ", "America/Los_Angeles"))
 _UNSET = object()
 
 
