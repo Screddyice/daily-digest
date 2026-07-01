@@ -7,9 +7,12 @@ formats NEBOS emits, today-window filtering, summary/next-steps parsing of both
 prose and bulleted summaries, the Calls render, composition, and graceful
 degradation.
 """
+import contextlib
+import io
 import json
 import unittest
 from datetime import date
+from unittest import mock
 
 import retro
 
@@ -274,6 +277,57 @@ class PendingSectionTests(unittest.TestCase):
                         ["shawn@teamnebula.ai"]) for i in range(retro.PENDING_MAX_ITEMS + 2)]
         out = retro.build_pending_section(today=TODAY, call=lambda t, a: many)
         self.assertIn("more open item", out)
+
+
+class DegradeTests(unittest.TestCase):
+    """The --json payload must never crash and must flag when a source degraded,
+    so the routine retries (or says so honestly) instead of a misleading empty
+    retro. Regression guard for the Jul 1 2026 'data unavailable' incident."""
+
+    def test_healthy_path_not_degraded(self):
+        data = retro.build_retro_data(
+            TODAY, env={}, call=lambda t, a: [DISCOVERY],
+            nebos_section="🎯 Top 5 — NEBOS\n\n• Reply to X — y")
+        self.assertFalse(data["degraded"])
+        self.assertEqual(data["call_count"], 1)
+
+    def test_meeting_fetch_raise_degrades_not_crash(self):
+        def boom(tool, args):
+            raise OSError("nebos down")
+        data = retro.build_retro_data(TODAY, env={}, call=boom, nebos_section=None)
+        self.assertTrue(data["degraded"])
+        self.assertEqual(data["call_count"], 0)
+        self.assertEqual(data["calls"], [])
+
+    def test_top5_build_raise_degrades_not_crash(self):
+        with mock.patch.object(retro.nebos, "build_section",
+                               side_effect=RuntimeError("composio down")):
+            data = retro.build_retro_data(
+                TODAY, env={"NEBOS_MCP_TOKEN": "x"}, call=lambda t, a: [DISCOVERY])
+        self.assertTrue(data["degraded"])
+        self.assertEqual(data["top5"], [])
+        self.assertEqual(data["call_count"], 1)   # meetings still render
+
+    def test_bad_meeting_is_skipped_not_fatal(self):
+        with mock.patch.object(retro, "call_record", side_effect=ValueError("boom")):
+            data = retro.build_retro_data(
+                TODAY, env={}, call=lambda t, a: [DISCOVERY], nebos_section=None)
+        self.assertTrue(data["degraded"])
+        self.assertEqual(data["calls"], [])
+
+    def test_json_output_always_valid_even_when_build_crashes(self):
+        with mock.patch.object(retro.sys, "argv", ["retro.py", "--json"]), \
+             mock.patch.object(retro, "build_retro_data",
+                               side_effect=RuntimeError("kaboom")), \
+             mock.patch.object(retro, "_today", return_value=TODAY):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = retro.main()
+        self.assertEqual(rc, 0)
+        payload = json.loads(buf.getvalue())      # must be parseable JSON
+        self.assertTrue(payload["degraded"])
+        self.assertEqual(payload["call_count"], 0)
+        self.assertEqual(payload["calls"], [])
 
 
 if __name__ == "__main__":
