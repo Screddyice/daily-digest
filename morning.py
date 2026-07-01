@@ -14,7 +14,6 @@ import json
 import os
 import urllib.request
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import alerts
 import bella
@@ -23,8 +22,9 @@ import llm
 import meetings
 import nebos
 import trends
+import tzsafe
 
-PT = ZoneInfo("America/Los_Angeles")
+PT = tzsafe.resolve("America/Los_Angeles")
 _UNSET = object()
 
 

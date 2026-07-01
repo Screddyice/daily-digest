@@ -19,11 +19,12 @@ import os
 import re
 import urllib.request
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+
+import tzsafe
 
 logger = logging.getLogger(__name__)
 
-PT = ZoneInfo("America/Los_Angeles")
+PT = tzsafe.resolve("America/Los_Angeles")
 COMPOSIO_EXECUTE = "https://backend.composio.dev/api/v3/tools/execute/{slug}"
 MAX_NAMES = 4
 PURPOSE_MAX_CHARS = 110

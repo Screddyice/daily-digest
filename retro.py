@@ -23,17 +23,17 @@ import re
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 import morning
 import nebos
+import tzsafe
 
 logger = logging.getLogger(__name__)
 
 # Timezone for "today's calls" and the header date. The retro is Shawn's
 # end-of-day wrap, so the window is the calendar day in this zone. Override with
 # RETRO_TZ (e.g. Europe/London) wherever Shawn is based.
-RETRO_TZ = ZoneInfo(os.environ.get("RETRO_TZ", "America/Los_Angeles"))
+RETRO_TZ = tzsafe.resolve(os.environ.get("RETRO_TZ", "America/Los_Angeles"))
 _UNSET = object()
 
 
@@ -361,9 +361,15 @@ def build_retro_data(today=None, *, env: dict | None = None, call=None,
                      nebos_section=_UNSET) -> dict:
     """Deterministic facts for the Call Retro, for an LLM to compose from:
     today's calls (each with summary + raw next_steps for owner attribution)
-    and the Top-5 NEBOS bullet lines. No judgment, no Slack — just the data."""
+    and the Top-5 NEBOS bullet lines. No judgment, no Slack — just the data.
+
+    Never raises: any source that errors degrades to empty and flips the
+    ``degraded`` flag, so the routine can retry (or say so honestly) rather than
+    silently posting a misleading empty retro on a transient blip.
+    """
     env = os.environ if env is None else env
     today = today or _today()
+    degraded = False
 
     meetings: list[dict] = []
     if call is not None or env.get("NEBOS_MCP_TOKEN"):
@@ -372,17 +378,31 @@ def build_retro_data(today=None, *, env: dict | None = None, call=None,
             meetings = fetch_today_meetings(nebos_call, today)
         except Exception as exc:  # NEBOS hiccup → no calls, never a crash
             logger.warning("retro: NEBOS meeting fetch failed: %s", exc)
-            meetings = []
+            degraded = True
 
     if nebos_section is _UNSET:
-        nebos_section = nebos.build_section(today, env=env)
+        try:
+            nebos_section = nebos.build_section(today, env=env)
+        except Exception as exc:  # Top-5 source hiccup → drop it, never a crash
+            logger.warning("retro: NEBOS Top-5 build failed: %s", exc)
+            nebos_section = None
+            degraded = True
+
+    calls = []
+    for m in meetings:
+        try:
+            calls.append(call_record(m))
+        except Exception as exc:  # one malformed meeting shouldn't sink the batch
+            logger.warning("retro: skipping unrenderable meeting: %s", exc)
+            degraded = True
 
     return {
         "date": today.isoformat(),
         "label": f"{today:%A, %B %-d}",
-        "call_count": len(meetings),
+        "call_count": len(calls),
         "top5": _section_bullets(nebos_section),
-        "calls": [call_record(m) for m in meetings],
+        "calls": calls,
+        "degraded": degraded,
     }
 
 
@@ -408,7 +428,18 @@ def main() -> int:
     # action-items-first message from. The routine reads this, not the rendered
     # text below (which stays as a self-contained local/fallback render).
     if "--json" in sys.argv:
-        print(json.dumps(build_retro_data(today)))
+        # The routine consumes this JSON, so it must ALWAYS be valid — even if
+        # every source is down. build_retro_data already degrades gracefully;
+        # this last-resort guard means an unforeseen error still yields a
+        # parseable (degraded) payload instead of empty stdout, so the routine
+        # retries rather than DMing "data unavailable" on a transient blip.
+        try:
+            data = build_retro_data(today)
+        except Exception as exc:
+            logger.warning("retro: build_retro_data crashed, emitting empty payload: %s", exc)
+            data = {"date": today.isoformat(), "label": f"{today:%A, %B %-d}",
+                    "call_count": 0, "top5": [], "calls": [], "degraded": True}
+        print(json.dumps(data))
         return 0
     text = build_retro(today)
     if not os.environ.get("DRY_RUN") and os.environ.get("SLACK_BOT_TOKEN") \
