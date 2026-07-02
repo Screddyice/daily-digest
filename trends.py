@@ -90,6 +90,13 @@ def direction(daily: dict[str, float], today: date) -> str | None:
     return two_point_direction(daily)
 
 
+def is_move(daily: dict[str, float], today: date) -> bool:
+    """True only for a real deviation (up or down). 'steady' and 'no data' are
+    NOT moves — the digest shows only what deviates from the usual, so a metric
+    sitting at baseline is dropped rather than reported as 'about as usual'."""
+    return direction(daily, today) in ("up", "down")
+
+
 def staleness_days(daily_by_metric: dict[str, dict[str, float]], today: date) -> int | None:
     """Days since the newest datapoint across all metrics; None if no data."""
     newest = max((max(d) for d in daily_by_metric.values() if d), default=None)
@@ -108,12 +115,12 @@ def has_fresh_data(daily_by_metric: dict[str, dict[str, float]], today: date) ->
 
 
 def has_readable_signal(series: dict[str, dict[str, float]], today: date) -> bool:
-    """True when at least one metric has enough history to read an actual trend
-    (`direction` is not None), rather than only "baseline building" / "not enough
-    history" placeholders. When this is False the whole pet section would be
-    filler, so the digest drops it entirely instead of mentioning the pet."""
+    """True when at least one metric actually DEVIATES (up or down) — not just
+    "steady"/"baseline building". When this is False the whole pet section would
+    be nothing but "about as usual" filler, so the digest drops it entirely
+    instead of mentioning the pet at all."""
     keys = ("steps", "sleep", *(k for k, *_ in PET_BEHAVIORS))
-    return any(direction(series.get(k, {}), today) is not None for k in keys)
+    return any(is_move(series.get(k, {}), today) for k in keys)
 
 
 def _recent_mean(daily: dict[str, float]) -> float | None:
@@ -132,33 +139,32 @@ def _stale_warning(noun: str, daily_by_metric: dict, today: date) -> str | None:
 
 
 # ------------------------------------------------------------------ you
-def _activity_line(d: dict[str, dict[str, float]], today: date) -> str:
+def _activity_line(d: dict[str, dict[str, float]], today: date) -> str | None:
     directions = [
         t for m in ("step_count", "active_energy", "apple_exercise_time")
         if (t := direction(d.get(m, {}), today)) is not None
     ]
-    if not directions:
-        return "• Activity & exercise: no recent movement data."
-    top = max(("up", "down", "steady"), key=directions.count)
+    top = max(("up", "down", "steady"), key=directions.count) if directions else None
+    if top not in ("up", "down"):
+        return None  # no data or at your usual — nothing to flag
     return {
         "up": "• Activity & exercise: trending up — more movement and exercise than your usual.",
         "down": "• Activity & exercise: trending down — less movement than your usual.",
-        "steady": "• Activity & exercise: steady — about your usual level.",
     }[top]
 
 
-def _lungs_line(d: dict[str, dict[str, float]], today: date) -> tuple[str, bool]:
-    """(line, below_normal_flag) — the flag feeds the illness watch."""
+def _lungs_line(d: dict[str, dict[str, float]], today: date) -> tuple[str | None, bool]:
+    """(line_or_None, below_normal_flag) — the flag still feeds the illness watch
+    even when the line itself is dropped as unremarkable."""
     spo2 = d.get("blood_oxygen_saturation", {})
     if not spo2:
-        return "• Lungs: no recent blood-oxygen reading.", False
+        return None, False
     rm = _recent_mean(spo2)
     if rm is not None and rm < SPO2_NORMAL_FLOOR:
         return "• Lungs: blood oxygen below your normal range — keep an eye on it.", True
-    t = direction(spo2, today)
-    if t == "down":
+    if direction(spo2, today) == "down":
         return "• Lungs: blood oxygen drifting lower, still in the normal range.", False
-    return "• Lungs: blood oxygen steady, in your normal range.", False
+    return None, False  # steady + in range — nothing to say
 
 
 def _stress_signals(d: dict[str, dict[str, float]], today: date) -> tuple[bool, bool]:
@@ -169,32 +175,32 @@ def _stress_signals(d: dict[str, dict[str, float]], today: date) -> tuple[bool, 
     )
 
 
-def _stress_line(hrv_down: bool, rhr_up: bool) -> str:
+def _stress_line(hrv_down: bool, rhr_up: bool) -> str | None:
     if hrv_down and rhr_up:
         return ("• Stress: signs of stress building — recovery dipping and "
                 "resting heart rate creeping up.")
     if hrv_down or rhr_up:
         return "• Stress: mild strain showing — one recovery marker moving the wrong way."
-    return "• Stress: no signs of stress — recovery looks steady."
+    return None  # no strain — nothing to flag
 
 
-def _sleep_line(d: dict[str, dict[str, float]], today: date) -> str:
+def _sleep_line(d: dict[str, dict[str, float]], today: date) -> str | None:
     sleep = d.get("sleep_analysis", {})
     if not sleep:
-        return "• Sleep: watch not worn overnight — no sleep signal this week."
+        return None  # watch not worn — drop, don't announce the gap
     cutoff = (today - timedelta(days=6)).isoformat()
     nights = sum(1 for day in sleep if day >= cutoff)
     if nights < MIN_NIGHTS_PER_WEEK:
-        return "• Sleep: patchy — watch off most nights, not enough to read a trend."
+        return None  # too patchy to read a trend — drop
     t = direction(sleep, today)
     if t == "down":
         return "• Sleep: running short — most nights below your usual."
     if t == "up":
         return "• Sleep: getting more than usual — good."
-    return "• Sleep: on track — about your usual."
+    return None  # on track — nothing to flag
 
 
-def _illness_line(d: dict[str, dict[str, float]], today: date, lungs_flag: bool) -> str:
+def _illness_line(d: dict[str, dict[str, float]], today: date, lungs_flag: bool) -> str | None:
     hrv = d.get("heart_rate_variability", {})
     rhr = d.get("resting_heart_rate", {})
     signals = sum((
@@ -205,26 +211,32 @@ def _illness_line(d: dict[str, dict[str, float]], today: date, lungs_flag: bool)
     if signals >= 2:
         return ("• Illness watch: possible signs you're fighting something off — "
                 "take it easy today.")
-    return "• Illness watch: no signals you're coming down with something."
+    return None  # no signals — nothing to say
 
 
-def render_you_section(daily_by_metric: dict[str, dict[str, float]], today: date) -> str:
-    L = [f"💪 You — {today:%a %b %-d}", ""]
+def render_you_section(daily_by_metric: dict[str, dict[str, float]], today: date) -> str | None:
+    """The health section, or None when there's nothing worth surfacing — no
+    data, or every metric sitting at your usual. Only real deviations and
+    threshold crossings (low blood oxygen, short sleep, strain, illness signs)
+    make the cut; steady/normal lines are dropped, never announced."""
     if not any(daily_by_metric.values()):
-        L.append("No health data available — is the export running?")
-        return "\n".join(L)
-    warning = _stale_warning("Health data", daily_by_metric, today)
-    if warning:
-        L += [warning, ""]
+        return None  # no health data at all — drop the section, don't mention the gap
     lungs, lungs_flag = _lungs_line(daily_by_metric, today)
     hrv_down, rhr_up = _stress_signals(daily_by_metric, today)
-    L += [
+    lines = [ln for ln in (
         _activity_line(daily_by_metric, today),
         lungs,
         _stress_line(hrv_down, rhr_up),
         _sleep_line(daily_by_metric, today),
         _illness_line(daily_by_metric, today, lungs_flag),
-    ]
+    ) if ln]
+    if not lines:
+        return None  # everything at baseline — nothing worth a section
+    L = [f"💪 You — {today:%a %b %-d}", ""]
+    warning = _stale_warning("Health data", daily_by_metric, today)
+    if warning:
+        L += [warning, ""]
+    L += lines
     return "\n".join(L)
 
 
@@ -241,29 +253,29 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
     # "baseline building" first-reading lines are suppressed entirely, so Bella
     # never lists filler — and the whole section is dropped upstream (via
     # has_readable_signal) when nothing qualifies.
+    # Only real deviations are shown. A metric sitting at her usual ("steady")
+    # or without enough history is dropped, never rendered as "about as usual".
     t = direction(series.get("steps", {}), today)
-    if t is not None:
+    if t in ("up", "down"):
         L.append({
             "up": "• Activity: trending up — moving more than her usual.",
             "down": "• Activity: trending down — moving less than her usual.",
-            "steady": "• Activity: steady — right around her usual daily movement.",
         }[t])
     t = direction(series.get("sleep", {}), today)
-    if t is not None:
+    if t in ("up", "down"):
         L.append({
             "up": "• Sleep: resting more than usual the past few days.",
             "down": "• Sleep: resting less than usual — could mean restlessness.",
-            "steady": "• Sleep: normal — her usual rest pattern.",
         }[t])
 
     # ---- Series 3+ AI behaviors: real event count + health-flavored direction ----
-    for key, label, up, down, steady in PET_BEHAVIORS:
+    for key, label, up, down, _steady in PET_BEHAVIORS:
         d = series.get(key, {})
         t = direction(d, today)
-        if t is None:  # no readable trend yet — skip rather than show filler
+        if t not in ("up", "down"):  # steady or no trend — skip, no filler
             continue
         count = _event_count(d)
-        phrasing = {"up": up, "down": down, "steady": steady}[t]
+        phrasing = {"up": up, "down": down}[t]
         L.append(f"• {label}: {count} today, {phrasing}")
     return "\n".join(L)
 

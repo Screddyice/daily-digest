@@ -74,7 +74,8 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
             current = {"date": today.isoformat(), "you": daily_by_metric}
             llm_body = llm.generate_digest(current, previous, today)
         you_block = llm_body or trends.render_you_section(daily_by_metric, today)
-        blocks += ["", you_block]
+        if you_block:  # None when every metric is at baseline — drop, don't show a bare header
+            blocks += ["", you_block]
 
     # Bella section — build_section returns None when her collar has no new data,
     # in which case her section is dropped too.

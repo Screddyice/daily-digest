@@ -129,15 +129,24 @@ class YouSectionTests(unittest.TestCase):
         base.update(over)
         return base
 
+    def _data_with_activity_up(self, **over):
+        """The steady baseline plus ONE real deviation (rising activity) so the
+        section renders — lets us check that OTHER calm metrics are DROPPED."""
+        return self._data(
+            step_count=_flat_then(TODAY, 4000, [6000, 6500, 7000]),
+            active_energy=_flat_then(TODAY, 250, [380, 400, 420]),
+            apple_exercise_time=_flat_then(TODAY, 20, [35, 40, 45]),
+            **over,
+        )
+
     def test_no_numbers_anywhere_in_body(self):
-        out = trends.render_you_section(self._data(), TODAY)
+        out = trends.render_you_section(self._data_with_activity_up(), TODAY)
         body = "\n".join(l for l in out.splitlines() if not l.startswith("💪"))
         self.assertNotRegex(body, r"\d")
 
-    def test_all_steady_reads_steady(self):
-        out = trends.render_you_section(self._data(), TODAY)
-        self.assertIn("Activity & exercise:", out)
-        self.assertIn("steady", out.lower())
+    def test_all_steady_drops_the_section(self):
+        # Every metric at its usual — nothing worth surfacing, so no section.
+        self.assertIsNone(trends.render_you_section(self._data(), TODAY))
 
     def test_rising_activity_reads_up(self):
         out = trends.render_you_section(self._data(
@@ -148,10 +157,10 @@ class YouSectionTests(unittest.TestCase):
         act = next(l for l in out.splitlines() if "Activity & exercise" in l)
         self.assertIn("up", act.lower())
 
-    def test_lung_health_line_present_and_calm_when_normal(self):
-        out = trends.render_you_section(self._data(), TODAY)
-        lung = next(l for l in out.splitlines() if "Lungs" in l)
-        self.assertIn("normal", lung.lower())
+    def test_lungs_line_absent_when_normal(self):
+        # Calm, in-range blood oxygen is dropped, not rendered as "steady, normal".
+        out = trends.render_you_section(self._data_with_activity_up(), TODAY)
+        self.assertNotIn("Lungs", out)
 
     def test_low_spo2_flagged_without_numbers(self):
         out = trends.render_you_section(self._data(
@@ -170,10 +179,9 @@ class YouSectionTests(unittest.TestCase):
         self.assertTrue("stress" in stress.lower() or "strain" in stress.lower())
         self.assertNotIn("no signs", stress.lower())
 
-    def test_stress_calm_when_recovery_steady(self):
-        out = trends.render_you_section(self._data(), TODAY)
-        stress = next(l for l in out.splitlines() if "Stress" in l)
-        self.assertIn("no", stress.lower())
+    def test_stress_line_absent_when_calm(self):
+        out = trends.render_you_section(self._data_with_activity_up(), TODAY)
+        self.assertNotIn("Stress", out)
 
     def test_sleep_debt_flagged_when_short_nights(self):
         out = trends.render_you_section(self._data(
@@ -182,10 +190,10 @@ class YouSectionTests(unittest.TestCase):
         sleep = next(l for l in out.splitlines() if "Sleep" in l)
         self.assertIn("short", sleep.lower())
 
-    def test_sleep_absent_says_no_signal_not_fake_ok(self):
-        out = trends.render_you_section(self._data(sleep_analysis={}), TODAY)
-        sleep = next(l for l in out.splitlines() if "Sleep" in l)
-        self.assertTrue("watch" in sleep.lower() or "no sleep data" in sleep.lower())
+    def test_sleep_line_absent_when_on_track_or_missing(self):
+        # Sleep at your usual OR no sleep signal at all — dropped, not announced.
+        out = trends.render_you_section(self._data_with_activity_up(sleep_analysis={}), TODAY)
+        self.assertNotIn("Sleep", out)
 
     def test_illness_watch_fires_on_combined_sharp_moves(self):
         out = trends.render_you_section(self._data(
@@ -198,36 +206,40 @@ class YouSectionTests(unittest.TestCase):
                         or "watch" in ill.lower())
         self.assertNotIn("no signals", ill.lower())
 
-    def test_illness_quiet_when_healthy(self):
-        out = trends.render_you_section(self._data(), TODAY)
-        ill = next(l for l in out.splitlines() if "Illness" in l)
-        self.assertIn("no signals", ill.lower())
+    def test_illness_line_absent_when_healthy(self):
+        out = trends.render_you_section(self._data_with_activity_up(), TODAY)
+        self.assertNotIn("Illness", out)
 
     def test_stale_data_leads_with_warning(self):
-        shift = 3
-        old_end = TODAY - timedelta(days=shift)
-        data = {k: _series(old_end, 17, v) for k, v in (
-            ("step_count", 5000), ("active_energy", 300), ("apple_exercise_time", 25),
-            ("heart_rate_variability", 45), ("resting_heart_rate", 60),
-            ("blood_oxygen_saturation", 97), ("sleep_analysis", 7.5),
-        )}
+        # A source that's stale but DOES deviate still carries the ⚠️ when reached.
+        old_end = TODAY - timedelta(days=3)
+        data = {
+            "step_count": _flat_then(old_end, 4000, [6000, 6500, 7000]),
+            "active_energy": _flat_then(old_end, 250, [380, 400, 420]),
+            "apple_exercise_time": _flat_then(old_end, 20, [35, 40, 45]),
+            "heart_rate_variability": _series(old_end, 17, 45),
+            "resting_heart_rate": _series(old_end, 17, 60),
+            "blood_oxygen_saturation": _series(old_end, 17, 97),
+            "sleep_analysis": _series(old_end, 17, 7.5),
+        }
         out = trends.render_you_section(data, TODAY)
+        self.assertIsNotNone(out)
         self.assertIn("⚠️", out)
         self.assertIn("hasn't synced", out)
 
     def test_fresh_data_has_no_warning(self):
-        out = trends.render_you_section(self._data(), TODAY)
+        out = trends.render_you_section(self._data_with_activity_up(), TODAY)
         self.assertNotIn("⚠️", out)
 
-    def test_no_data_at_all_degrades_explicitly(self):
-        out = trends.render_you_section({}, TODAY)
-        self.assertIn("no health data", out.lower())
+    def test_no_data_at_all_drops_the_section(self):
+        # No health data — the section is dropped entirely, the gap is not announced.
+        self.assertIsNone(trends.render_you_section({}, TODAY))
 
 
 class BellaSectionTests(unittest.TestCase):
     def test_bella_trends_render_without_numbers(self):
-        steps = _flat_then(TODAY, 8000, [10000, 11000, 12000])
-        sleep = _series(TODAY, 17, 720.0)
+        steps = _flat_then(TODAY, 8000, [10000, 11000, 12000])   # up
+        sleep = _flat_then(TODAY, 720.0, [560, 540, 520])         # down
         out = trends.render_pet_section("Bella", {"steps": steps, "sleep": sleep}, TODAY)
         self.assertIn("Bella", out)
         self.assertIn("Activity:", out)
@@ -243,32 +255,28 @@ class BellaSectionTests(unittest.TestCase):
         self.assertIn("no", out.lower())
 
     def test_bella_behaviors_render_with_event_counts_and_direction(self):
-        """Behavior events show Bella's real counts alongside the direction;
-        steps/sleep stay numberless (Shawn only wanted numbers on behaviors)."""
+        """Moving behaviors show Bella's real counts + direction; steady ones are
+        DROPPED (no 'about as usual'). Steps stays numberless."""
         series = {
-            "steps": _series(TODAY, 17, 8000),
-            "sleep": _series(TODAY, 17, 700.0),
-            "eating_events": _flat_then(TODAY, 3, [5, 6, 7]),       # rising
-            "drinking_events": _series(TODAY, 17, 5),               # steady
-            "scratching_events": _flat_then(TODAY, 2, [6, 7, 8]),   # rising (skin?)
-            "licking_events": _flat_then(TODAY, 4, [2, 1, 1]),      # falling
-            "barking_events": _series(TODAY, 17, 1),
+            "steps": _flat_then(TODAY, 8000, [10000, 11000, 12000]),  # up
+            "eating_events": _flat_then(TODAY, 3, [5, 6, 7]),          # rising
+            "drinking_events": _series(TODAY, 17, 5),                  # steady -> dropped
+            "scratching_events": _flat_then(TODAY, 2, [6, 7, 8]),      # rising (skin?)
+            "licking_events": _flat_then(TODAY, 4, [2, 1, 1]),         # falling
+            "barking_events": _series(TODAY, 17, 1),                   # steady -> dropped
         }
         out = trends.render_pet_section("Bella", series, TODAY)
         eat = next(l for l in out.splitlines() if "Eating" in l)
         self.assertIn("7 event", eat)          # latest reading as a real count
         self.assertIn("more", eat.lower())     # direction wording kept alongside
-        drink = next(l for l in out.splitlines() if "Drinking" in l)
-        self.assertIn("5 event", drink)
-        self.assertIn("usual", drink.lower())
-        bark = next(l for l in out.splitlines() if "Barking" in l)
-        self.assertIn("1 event", bark)         # singular, not "1 events"
-        self.assertNotIn("1 events", bark)
-        # steps & sleep were NOT selected for numbers — they stay direction-only
+        lick = next(l for l in out.splitlines() if "Licking" in l)
+        self.assertIn("less", lick.lower())
+        # steady behaviors are dropped entirely, never rendered as "about as usual"
+        self.assertNotIn("Drinking", out)
+        self.assertNotIn("Barking", out)
+        # steps was NOT selected for numbers — it stays direction-only
         act = next(l for l in out.splitlines() if "Activity" in l)
         self.assertNotRegex(act, r"\d")
-        sleep = next(l for l in out.splitlines() if "Sleep" in l)
-        self.assertNotRegex(sleep, r"\d")
 
     def test_bella_behavior_absent_is_skipped_not_faked(self):
         series = {"steps": _series(TODAY, 17, 8000), "sleep": _series(TODAY, 17, 700.0)}
@@ -281,7 +289,7 @@ class BellaSectionTests(unittest.TestCase):
         is suppressed entirely — no "baseline building" filler. A metric with
         real history (steps) still renders."""
         series = {
-            "steps": _series(TODAY, 17, 8000),
+            "steps": _flat_then(TODAY, 8000, [10000, 11000, 12000]),  # up (real history)
             "eating_events": {TODAY.isoformat(): 3},
             "licking_events": {TODAY.isoformat(): 5},
         }
