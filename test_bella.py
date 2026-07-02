@@ -238,17 +238,17 @@ class BuildSectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "hist.json"
             prof = Path(tmp) / "prof.json"
-            # seed enough history that a trend is readable
+            # seed LOWER history so today's live 8421 reads as a real up-trend
+            # (a steady reading would now be dropped as filler, not shown)
             for i in range(17):
                 d = date(2026, 5, 26 + i) if 26 + i <= 31 else date(2026, 6, 26 + i - 31)
-                bella.update_history(path, "steps", d.isoformat(), 8000.0)
+                bella.update_history(path, "steps", d.isoformat(), 6000.0)
             out = bella.build_section(TODAY, env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
                                       history_path=path, profile_path=prof,
                                       gql=fake_gql, pet_name="Bella")
             self.assertEqual(bella.load_profile(prof)["age_years"], 4)
             self.assertIn("🐕 Bella", out)
             self.assertIn("Activity:", out)
-            self.assertIn("Sleep:", out)
             # today's live reading landed in the history file
             self.assertEqual(bella.load_history(path)["steps"][TODAY.isoformat()], 8421.0)
             # behavior counts captured into history too
@@ -420,7 +420,7 @@ class GistHistoryStoreTests(unittest.TestCase):
 
         # Seed the gist with 17 prior days so a trend is readable; build_section
         # must add today's reading and save the merged history back to the gist.
-        seed = {"steps": {(TODAY - timedelta(days=i)).isoformat(): 8000.0 for i in range(1, 18)}}
+        seed = {"steps": {(TODAY - timedelta(days=i)).isoformat(): 6000.0 for i in range(1, 18)}}
         saved = {}
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(bella, "gist_load", return_value=json.loads(json.dumps(seed))), \

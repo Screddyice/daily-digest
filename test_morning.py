@@ -17,6 +17,9 @@ def _series(end: date, n: int, val: float) -> dict:
 
 
 def _you_data(end: date = TODAY) -> dict:
+    # Mostly at-baseline, with ONE real deviation (sleep running short the last
+    # few nights) so the You section has something worth surfacing. A fully
+    # steady dataset now renders nothing — the digest drops it as filler.
     return {
         "step_count": _series(end, 17, 5000),
         "active_energy": _series(end, 17, 300),
@@ -24,7 +27,8 @@ def _you_data(end: date = TODAY) -> dict:
         "heart_rate_variability": _series(end, 17, 45),
         "resting_heart_rate": _series(end, 17, 60),
         "blood_oxygen_saturation": _series(end, 17, 97),
-        "sleep_analysis": _series(end, 17, 7.5),
+        "sleep_analysis": {**_series(end, 17, 7.5),
+                           **{(end - timedelta(days=i)).isoformat(): 5.0 for i in range(3)}},
     }
 
 
@@ -181,9 +185,15 @@ class AlertWiringTests(unittest.TestCase):
     def test_healthy_data_sends_nothing(self):
         import tempfile
         from pathlib import Path
+        # Fully at-baseline health data — no deviations, so nothing to alert on.
+        healthy = {m: _series(TODAY, 17, v) for m, v in (
+            ("step_count", 5000), ("active_energy", 300), ("apple_exercise_time", 25),
+            ("heart_rate_variability", 45), ("resting_heart_rate", 60),
+            ("blood_oxygen_saturation", 97), ("sleep_analysis", 7.5),
+        )}
         sent = []
         with tempfile.TemporaryDirectory() as tmp:
-            morning.run_alerts(_you_data(), {"steps": {}, "sleep": {}}, TODAY,
+            morning.run_alerts(healthy, {"steps": {}, "sleep": {}}, TODAY,
                                send=lambda lines: sent.extend(lines),
                                state_path=Path(tmp) / "s.json")
         self.assertEqual(sent, [])

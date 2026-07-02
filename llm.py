@@ -42,16 +42,16 @@ Hard rules:
 "3 days" — say "a few days". This section must contain zero numerals.
 - Every line states a direction (increasing / decreasing / steady) or a \
 plain-English conclusion, never a value.
-- One section, exactly this shape: a "💪 You" section with one short bullet \
-each for: activity & exercise, lungs (blood oxygen), stress signals (recovery \
-markers like HRV and resting heart rate), sleep (enough or not), and an \
-illness watch (combinations hinting he's getting sick).
+- One section: a "💪 You" section with a short bullet ONLY for whichever of \
+these has actually changed direction or crossed a health line — SKIP any that \
+is sitting at his usual: activity & exercise, lungs (blood oxygen), stress \
+signals (recovery markers like HRV and resting heart rate), sleep (enough or \
+not), and an illness watch (combinations hinting he's getting sick).
 - Bullets start with "• ". No markdown headers, no bold, no tables.
-- If the current export's data is stale or missing for a stretch, open the \
-section with a "⚠️" line saying the data hasn't synced and since roughly when \
-(in words, never a date with digits).
-- Be direct and human. Say what matters and stop. If nothing is notable, say \
-things look steady rather than inventing concern.
+- Report ONLY what deviates. Do NOT pad with "steady", "normal", "no signs", \
+or "no recent data" lines — omit a metric entirely when it is unremarkable. If \
+NOTHING across all metrics is notable, reply with exactly the word NONE and \
+nothing else (the section is then dropped, not shown).
 
 Comparison and judgment:
 - You usually only have the PREVIOUS export and the CURRENT one. That is \
@@ -127,6 +127,13 @@ def generate_digest(current: dict, previous: dict | None, today: date, *,
 
     def _clean(text: str | None) -> str | None:
         if not text or re.search(r"\d", text):
+            return None
+        t = text.strip()
+        # "NONE" = nothing notable, or a body with no actual bullet = no real
+        # signal. Either way, drop it so the caller falls back to the (also
+        # filler-free) deterministic render, and the section is omitted when
+        # there's nothing worth surfacing rather than showing an empty header.
+        if t.upper() == "NONE" or "•" not in t:
             return None
         return text
 
