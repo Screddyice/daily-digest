@@ -1,11 +1,11 @@
 # CLAUDE.md — project memory for daily-digest
 
 Personal/work digests for Shawn (Team Nebula), delivered to Slack as the
-**Nebula Assist** bot. Stdlib only, no dependencies. Tests are stdlib `unittest`.
+**NEBOS Assist** bot. Stdlib only, no dependencies. Tests are stdlib `unittest`.
 
 ## What ships where
 
-Two digests, both posted to Slack DM **`D0AGFSC9PHN`** (Shawn ↔ Nebula Assist bot
+Two digests, both posted to Slack DM **`D0AGFSC9PHN`** (Shawn ↔ NEBOS Assist bot
 `U0AFMJ70JV8`) via `morning._send_slack` (`SLACK_BOT_TOKEN` + `SLACK_CHANNEL`):
 
 - **Morning Digest** — `morning.py`. Order: `🎯 Top 5 — NEBOS` (lead) →
@@ -64,7 +64,7 @@ and `nebos.build_section` return `None` when unconfigured/unreachable/empty;
 ## Env vars
 `NEB_COMPOSIO_MCP_API_KEY` (+ `NEB_COMPOSIO_MCP_USER_ID`) for the Top-5 section,
 `NEBOS_MCP_TOKEN` (+ `NEBOS_MCP_URL`, default `https://teamnebula-os.web.app/api/mcp`)
-for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (Nebula Assist),
+for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (NEBOS Assist),
 `SLACK_CHANNEL=D0AGFSC9PHN`, `NEBOS_CLIENT_DOMAINS=rivus.mx,newcalgon.net,rs21.io`,
 `RETRO_TZ` (optional — timezone for the Call Retro's "today" window + header,
 default `America/Los_Angeles`; set `Europe/London` etc. for where Shawn is based),
@@ -105,7 +105,7 @@ against `/v1/code/triggers`) — that's how the Call Retro trigger
 
 Note: the Composio Slack connection is a **user token** (shawnsreddy) — it CANNOT
 post into `D0AGFSC9PHN` (returns `restricted_action_read_only_channel`); only the
-Nebula Assist bot token can. Test previews from Claude Code land in the Composio
+NEBOS Assist bot token can. Test previews from Claude Code land in the Composio
 app DM (`D071FB7PRSA`) instead.
 
 ## History
