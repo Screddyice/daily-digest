@@ -159,6 +159,7 @@ class BuildSectionTests(unittest.TestCase):
 class ShawnActionSectionTests(unittest.TestCase):
     def _linear_call(self, slug, args):
         self.assertEqual(slug, "LINEAR_RUN_QUERY_OR_MUTATION")
+        self.assertEqual(args["variables"], {})
         return LINEAR_RESPONSE
 
     def test_combines_only_shawn_meeting_actions_and_assigned_linear(self):

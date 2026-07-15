@@ -283,6 +283,41 @@ class PendingSectionTests(unittest.TestCase):
         self.assertEqual(mine["age_days"], 0)
         self.assertEqual(other["age_days"], 1)
 
+    def test_owner_grouped_actions_extract_only_shawns_block(self):
+        full = {"actionItemsBySource": {"fireflies": [
+            {"text": "**Maira Kashif**", "assignee": None},
+            {"text": "Stage the calendar app (05:12)", "assignee": None},
+            {"text": "**Shawn Reddy**", "assignee": None},
+            {"text": "Send the GTM plan to the team (19:50)", "assignee": None},
+            {"text": "Hire LinkedIn marketing support (20:01)", "assignee": None},
+        ]}}
+        self.assertEqual(retro.shawn_actions_from_meeting(full), [
+            "Send the GTM plan to the team",
+            "Hire LinkedIn marketing support",
+        ])
+
+    def test_explicit_assignee_is_supported_and_sources_are_deduped(self):
+        action = {"text": "Send the revised SOW", "assignee": "Shawn Reddy"}
+        full = {"actionItemsBySource": {
+            "fireflies": [action],
+            "gemini": [action],
+        }}
+        self.assertEqual(retro.shawn_actions_from_meeting(full), ["Send the revised SOW"])
+
+    def test_fetch_pending_uses_full_meeting_action_items(self):
+        listed = {**NS_SHAWN, "id": "meeting-1"}
+        full = {"actionItemsBySource": {"fireflies": [
+            {"text": "**Shawn Reddy**", "assignee": None},
+            {"text": "Send the revised SOW (01:41)", "assignee": None},
+        ]}}
+
+        def call(tool, args):
+            return [listed] if tool == retro.MEETING_LIST else full
+
+        items = retro.fetch_pending_items(today=TODAY, call=call)
+        self.assertEqual(items[0]["text"], "Send the revised SOW")
+        self.assertEqual(items[0]["title"], "Carlos Sync")
+
     def test_calls_without_next_steps_are_skipped(self):
         call = lambda tool, args: [NS_NONE]
         self.assertIsNone(retro.build_pending_section(today=TODAY, call=call))
