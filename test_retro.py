@@ -275,6 +275,14 @@ class PendingSectionTests(unittest.TestCase):
         self.assertIn("(from Carlos Sync, today)", out)
         self.assertIn("(from Volt Sync, yesterday)", out)
 
+    def test_structured_items_include_age_for_combined_ranking(self):
+        items = retro.fetch_pending_items(
+            today=TODAY, call=lambda tool, args: [NS_OTHER, NS_SHAWN])
+        mine = next(item for item in items if item["mine"])
+        other = next(item for item in items if not item["mine"])
+        self.assertEqual(mine["age_days"], 0)
+        self.assertEqual(other["age_days"], 1)
+
     def test_calls_without_next_steps_are_skipped(self):
         call = lambda tool, args: [NS_NONE]
         self.assertIsNone(retro.build_pending_section(today=TODAY, call=call))

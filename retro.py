@@ -344,10 +344,33 @@ def pending_items(meetings: list[dict], today) -> list[dict]:
             "text": _truncate(nxt, PENDING_ITEM_MAX_CHARS),
             "title": r["title"],
             "day": _day_label(m["_dt"].date(), today),
+            "age_days": max(0, (today - m["_dt"].date()).days),
         })
     # Shawn's items first; otherwise preserve newest-first order (stable sort).
     items.sort(key=lambda it: not it["mine"])
     return items
+
+
+def fetch_pending_items(today=None, *, env: dict | None = None, call=None,
+                        days: int | None = None) -> list[dict]:
+    """Fetch recent meeting-note actions without rendering them.
+
+    This is the structured input used by Shawn's combined morning Top 5. A
+    failed or unconfigured meeting store degrades to an empty list.
+    """
+    env = os.environ if env is None else env
+    today = today or _today()
+    days = PENDING_LOOKBACK_DAYS if days is None else days
+    if call is None:
+        if not env.get("NEBOS_MCP_TOKEN"):
+            return []
+        call = make_nebos_call(env)
+    try:
+        meetings = fetch_meetings_in_window(call, today - timedelta(days=days - 1), today)
+    except Exception as exc:
+        logger.warning("pending: NEBOS meeting fetch failed: %s", exc)
+        return []
+    return pending_items(meetings, today)
 
 
 def render_pending_section(items: list[dict]) -> str:
@@ -366,19 +389,7 @@ def build_pending_section(today=None, *, env: dict | None = None, call=None,
     """Open action items carried forward from the last `days` of calls (default
     PENDING_LOOKBACK_DAYS), Shawn's first. None when NEBOS isn't configured/
     reachable or nothing is pending — so the morning digest drops the section."""
-    env = os.environ if env is None else env
-    today = today or _today()
-    days = PENDING_LOOKBACK_DAYS if days is None else days
-    if call is None:
-        if not env.get("NEBOS_MCP_TOKEN"):
-            return None
-        call = make_nebos_call(env)
-    try:
-        meetings = fetch_meetings_in_window(call, today - timedelta(days=days - 1), today)
-    except Exception as exc:  # NEBOS must never sink the digest
-        logger.warning("pending: NEBOS meeting fetch failed: %s", exc)
-        return None
-    items = pending_items(meetings, today)
+    items = fetch_pending_items(today, env=env, call=call, days=days)
     if not items:
         return None
     return render_pending_section(items)
