@@ -229,6 +229,82 @@ def render_section(lines: list[str]) -> str:
     return "\n".join(L)
 
 
+def _meeting_candidate(item: dict) -> dict | None:
+    """Turn an explicitly Shawn-owned meeting action into a ranked candidate."""
+    if not item.get("mine") or not str(item.get("text") or "").strip():
+        return None
+    age = max(0, int(item.get("age_days") or 0))
+    text = str(item["text"]).strip()
+    text = re.sub(
+        r"^shawn(?:\s+reddy)?\s+(?:to|will|should|needs\s+to|must)\s+",
+        "", text, flags=re.IGNORECASE)
+    if text:
+        text = text[0].upper() + text[1:]
+    title = str(item.get("title") or "recent meeting").strip()
+    day = str(item.get("day") or "recently").strip()
+    return {
+        "score": min(age, 3),
+        "tiebreak": f"{age:03d}",
+        "id2": f"meeting:{title}:{text}",
+        "dedupe": re.sub(r"\W+", " ", text.lower()).strip(),
+        "line": f"• {text} — meeting note: {title}, {day}",
+    }
+
+
+def build_shawn_action_section(today: date | None = None, *, env: dict | None = None,
+                               call=None, meeting_items: list[dict] | None = None) -> str | None:
+    """Up to five concrete actions for Shawn from meetings and Linear only.
+
+    Linear's ``viewer.assignedIssues`` provides the tenant/user boundary. Meeting
+    actions qualify only when the note explicitly names Shawn as the owner.
+    Gmail, general team work, and ownerless meeting notes are intentionally out.
+    """
+    today = today or date.today()
+    env = os.environ if env is None else env
+    candidates = [c for item in (meeting_items or []) if (c := _meeting_candidate(item))]
+
+    if call is None and env.get("NEB_COMPOSIO_MCP_API_KEY"):
+        call = make_call(env)
+    if call is not None:
+        try:
+            issues = parse_issues(call("LINEAR_RUN_QUERY_OR_MUTATION",
+                                       {"query_or_mutation": LINEAR_QUERY}))
+            for issue in issues:
+                c = _issue_candidate(issue, today)
+                c["dedupe"] = re.sub(r"\W+", " ", issue["title"].lower()).strip()
+                details = [issue["priority_label"]]
+                if issue["due"]:
+                    try:
+                        overdue = date.fromisoformat(issue["due"]) < today
+                    except ValueError:
+                        overdue = False
+                    details.append(
+                        f"overdue; due {issue['due']}" if overdue else f"due {issue['due']}")
+                c["line"] = (
+                    f"• {issue['title']} — Linear {issue['id']} · "
+                    f"{' · '.join(details)}")
+                candidates.append(c)
+        except Exception as exc:
+            logger.warning("nebos: linear fetch failed: %s", exc)
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (c["score"], c["tiebreak"], c["id2"]))
+    seen: set[str] = set()
+    lines = []
+    for candidate in candidates:
+        key = candidate["dedupe"]
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        lines.append(candidate["line"])
+        if len(lines) == TOP_N:
+            break
+    if not lines:
+        return None
+    return "\n".join(["🎯 Shawn — Top 5 actions", "", *lines])
+
+
 def build_section(today: date | None = None, *, env: dict | None = None,
                   call=None, domains: set[str] | None = None) -> str | None:
     """The Top-5 section, or None when there's nothing to show — Composio not
