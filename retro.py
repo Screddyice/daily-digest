@@ -63,6 +63,9 @@ PENDING_LOOKBACK_DAYS = int(os.environ.get("PENDING_LOOKBACK_DAYS", "3"))
 PENDING_MAX_ITEMS = 8
 PENDING_ITEM_MAX_CHARS = 140      # tighter than the retro's Next: line — this is a reminder
 _SHAWN = re.compile(r"\bshawn\b", re.IGNORECASE)
+_OWNER_HEADING = re.compile(r"^\*\*\s*(.+?)\s*\*\*$")
+_ACTION_TIMESTAMP = re.compile(r"\s*\(\d{1,2}:\d{2}\)\s*$")
+MEETING_ACTION_FETCH_MAX = 10
 
 # Internal domains — attendees here don't make a meeting an external "call",
 # and aren't named in the "with" line.
@@ -351,6 +354,44 @@ def pending_items(meetings: list[dict], today) -> list[dict]:
     return items
 
 
+def shawn_actions_from_meeting(meeting: dict) -> list[str]:
+    """Extract only Shawn's owner-grouped action items from a full meeting doc.
+
+    Fireflies action items currently encode ownership as a bold heading followed
+    by that person's tasks, while some sources populate ``assignee`` directly.
+    Support both forms and deduplicate when Fireflies and Gemini agree.
+    """
+    by_source = meeting.get("actionItemsBySource")
+    if not isinstance(by_source, dict):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for source_items in by_source.values():
+        if not isinstance(source_items, list):
+            continue
+        owner = ""
+        for raw in source_items:
+            if not isinstance(raw, dict):
+                continue
+            text = str(raw.get("text") or "").strip()
+            if not text:
+                continue
+            heading = _OWNER_HEADING.match(text)
+            if heading:
+                owner = heading.group(1).strip()
+                continue
+            assignee = str(raw.get("assignee") or "").strip()
+            if not (_SHAWN.search(assignee) or (not assignee and _SHAWN.search(owner))):
+                continue
+            text = _ACTION_TIMESTAMP.sub("", text).strip()
+            key = re.sub(r"\W+", " ", text.lower()).strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+    return out
+
+
 def fetch_pending_items(today=None, *, env: dict | None = None, call=None,
                         days: int | None = None) -> list[dict]:
     """Fetch recent meeting-note actions without rendering them.
@@ -370,6 +411,34 @@ def fetch_pending_items(today=None, *, env: dict | None = None, call=None,
     except Exception as exc:
         logger.warning("pending: NEBOS meeting fetch failed: %s", exc)
         return []
+    # The list tool stays compact and omits actionItemsBySource. Fetch full docs
+    # for the newest meetings, then read only Shawn's owner block.
+    detailed: list[dict] = []
+    for meeting in meetings[:MEETING_ACTION_FETCH_MAX]:
+        meeting_id = meeting.get("id")
+        if not meeting_id:
+            continue
+        try:
+            full = call("meeting_transcript", {"meetingId": meeting_id})
+        except Exception as exc:
+            logger.warning("pending: full meeting fetch failed for %s: %s",
+                           meeting.get("id"), exc)
+            continue
+        if not isinstance(full, dict):
+            continue
+        for text in shawn_actions_from_meeting(full):
+            detailed.append({
+                "mine": True,
+                "text": _truncate(text, PENDING_ITEM_MAX_CHARS),
+                "title": (meeting.get("title") or "Meeting").strip(),
+                "day": _day_label(meeting["_dt"].date(), today),
+                "age_days": max(0, (today - meeting["_dt"].date()).days),
+            })
+    if detailed:
+        return detailed
+
+    # Backward-compatible fallback for older meeting docs whose summary has a
+    # labeled Next Steps bullet but no structured actionItemsBySource.
     return pending_items(meetings, today)
 
 

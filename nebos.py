@@ -268,7 +268,8 @@ def build_shawn_action_section(today: date | None = None, *, env: dict | None = 
     if call is not None:
         try:
             issues = parse_issues(call("LINEAR_RUN_QUERY_OR_MUTATION",
-                                       {"query_or_mutation": LINEAR_QUERY}))
+                                       {"query_or_mutation": LINEAR_QUERY,
+                                        "variables": {}}))
             for issue in issues:
                 c = _issue_candidate(issue, today)
                 c["dedupe"] = re.sub(r"\W+", " ", issue["title"].lower()).strip()
@@ -319,7 +320,8 @@ def build_section(today: date | None = None, *, env: dict | None = None,
     candidates: list[dict] = []
     try:
         issues = parse_issues(call("LINEAR_RUN_QUERY_OR_MUTATION",
-                                   {"query_or_mutation": LINEAR_QUERY}))
+                                   {"query_or_mutation": LINEAR_QUERY,
+                                    "variables": {}}))
         candidates += [_issue_candidate(i, today) for i in issues]
     except Exception as exc:  # one source down shouldn't sink the other
         logger.warning("nebos: linear fetch failed: %s", exc)
