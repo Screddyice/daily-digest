@@ -103,6 +103,21 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(retro.call_partners(DISCOVERY["attendees"]), "Rivus")
         self.assertEqual(retro.call_partners(["shawn@teamnebula.ai", "x@aiadvantageagency.co"]), "")
 
+    def test_partners_accept_structured_attendees(self):
+        attendees = [
+            {"email": "shawn@teamnebula.ai", "name": "Shawn"},
+            {"email": "jorge@rivus.mx", "name": "Jorge"},
+            {"emailAddress": {"address": "monica@volttruck.com"}},
+        ]
+        self.assertEqual(retro.call_partners(attendees), "Rivus, Volttruck")
+
+    def test_partners_ignore_malformed_attendees(self):
+        attendees = [None, 42, {}, {"name": "No email"}, {"email": None}]
+        self.assertEqual(retro.call_partners(attendees), "")
+
+    def test_partners_accept_single_attendee_object(self):
+        self.assertEqual(retro.call_partners({"email": "jorge@rivus.mx"}), "Rivus")
+
 
 class RenderTests(unittest.TestCase):
     def test_one_call_has_title_time_summary_next(self):
@@ -259,6 +274,49 @@ class PendingSectionTests(unittest.TestCase):
         self.assertLess(out.index("revised SOW"), out.index("Maira"))
         self.assertIn("(from Carlos Sync, today)", out)
         self.assertIn("(from Volt Sync, yesterday)", out)
+
+    def test_structured_items_include_age_for_combined_ranking(self):
+        items = retro.fetch_pending_items(
+            today=TODAY, call=lambda tool, args: [NS_OTHER, NS_SHAWN])
+        mine = next(item for item in items if item["mine"])
+        other = next(item for item in items if not item["mine"])
+        self.assertEqual(mine["age_days"], 0)
+        self.assertEqual(other["age_days"], 1)
+
+    def test_owner_grouped_actions_extract_only_shawns_block(self):
+        full = {"actionItemsBySource": {"fireflies": [
+            {"text": "**Maira Kashif**", "assignee": None},
+            {"text": "Stage the calendar app (05:12)", "assignee": None},
+            {"text": "**Shawn Reddy**", "assignee": None},
+            {"text": "Send the GTM plan to the team (19:50)", "assignee": None},
+            {"text": "Hire LinkedIn marketing support (20:01)", "assignee": None},
+        ]}}
+        self.assertEqual(retro.shawn_actions_from_meeting(full), [
+            "Send the GTM plan to the team",
+            "Hire LinkedIn marketing support",
+        ])
+
+    def test_explicit_assignee_is_supported_and_sources_are_deduped(self):
+        action = {"text": "Send the revised SOW", "assignee": "Shawn Reddy"}
+        full = {"actionItemsBySource": {
+            "fireflies": [action],
+            "gemini": [action],
+        }}
+        self.assertEqual(retro.shawn_actions_from_meeting(full), ["Send the revised SOW"])
+
+    def test_fetch_pending_uses_full_meeting_action_items(self):
+        listed = {**NS_SHAWN, "id": "meeting-1"}
+        full = {"actionItemsBySource": {"fireflies": [
+            {"text": "**Shawn Reddy**", "assignee": None},
+            {"text": "Send the revised SOW (01:41)", "assignee": None},
+        ]}}
+
+        def call(tool, args):
+            return [listed] if tool == retro.MEETING_LIST else full
+
+        items = retro.fetch_pending_items(today=TODAY, call=call)
+        self.assertEqual(items[0]["text"], "Send the revised SOW")
+        self.assertEqual(items[0]["title"], "Carlos Sync")
 
     def test_calls_without_next_steps_are_skipped(self):
         call = lambda tool, args: [NS_NONE]

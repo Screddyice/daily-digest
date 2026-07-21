@@ -114,11 +114,15 @@ def has_fresh_data(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     return age is not None and age < STALE_AFTER_DAYS
 
 
-def has_readable_signal(series: dict[str, dict[str, float]], today: date) -> bool:
+def has_readable_signal(series: dict[str, dict[str, float]], today: date,
+                        behavior_directions: dict[str, str] | None = None) -> bool:
     """True when at least one metric actually DEVIATES (up or down) — not just
     "steady"/"baseline building". When this is False the whole pet section would
     be nothing but "about as usual" filler, so the digest drops it entirely
     instead of mentioning the pet at all."""
+    native = behavior_directions or {}
+    if any(native.get(k) in ("up", "down") for k, *_ in PET_BEHAVIORS):
+        return True
     keys = ("steps", "sleep", *(k for k, *_ in PET_BEHAVIORS))
     return any(is_move(series.get(k, {}), today) for k in keys)
 
@@ -241,7 +245,8 @@ def render_you_section(daily_by_metric: dict[str, dict[str, float]], today: date
 
 
 # ------------------------------------------------------------------ pet
-def render_pet_section(name: str, series: dict[str, dict[str, float]], today: date) -> str:
+def render_pet_section(name: str, series: dict[str, dict[str, float]], today: date,
+                       behavior_directions: dict[str, str] | None = None) -> str:
     L = [f"🐕 {name}", ""]
     if not any(series.values()):
         L.append(f"No data from {name}'s Fi collar yet.")
@@ -271,8 +276,10 @@ def render_pet_section(name: str, series: dict[str, dict[str, float]], today: da
     # ---- Series 3+ AI behaviors: real event count + health-flavored direction ----
     for key, label, up, down, _steady in PET_BEHAVIORS:
         d = series.get(key, {})
-        t = direction(d, today)
+        t = (behavior_directions or {}).get(key) or direction(d, today)
         if t not in ("up", "down"):  # steady or no trend — skip, no filler
+            continue
+        if not d:  # Fi supplied a direction but no readable current count
             continue
         count = _event_count(d)
         phrasing = {"up": up, "down": down}[t]

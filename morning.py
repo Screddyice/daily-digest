@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 
 import alerts
 import bella
@@ -28,6 +30,15 @@ PT = tzsafe.resolve("America/Los_Angeles")
 _UNSET = object()
 
 
+def build_shawn_action_section(today, *, env=None, linear_call=None, meeting_call=None):
+    """Combine Shawn-owned recent meeting actions with his assigned Linear work."""
+    import retro  # retro imports morning for delivery; keep this dependency lazy
+    env = os.environ if env is None else env
+    meeting_items = retro.fetch_pending_items(today, env=env, call=meeting_call)
+    return nebos.build_shawn_action_section(
+        today, env=env, call=linear_call, meeting_items=meeting_items)
+
+
 def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
                  llm_body=_UNSET, meetings_section=None, nebos_section=_UNSET,
                  pending_section=_UNSET) -> str:
@@ -39,19 +50,16 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
     if meetings_section is None:
         meetings_section = meetings.build_section(today)
     if nebos_section is _UNSET:
-        nebos_section = nebos.build_section(today)
+        nebos_section = build_shawn_action_section(today)
     if pending_section is _UNSET:
-        # Open to-dos carried forward from the last few days of calls. Lazy
-        # import: retro imports morning, so importing at module load would be a
-        # cycle; resolved here at call time instead.
-        import retro
-        pending_section = retro.build_pending_section(today)
+        # Recent meeting actions are merged into the Shawn-specific Top 5.
+        pending_section = None
 
     header = f"☀️  Morning Digest — {today:%A, %B %-d, %Y}"
     blocks = [header]
 
-    # Top 5 (NEBOS) leads the digest — the day's action items and client
-    # emails to handle. Dropped when there's nothing actionable to show.
+    # Shawn-specific actions from recent meeting notes and his assigned Linear
+    # tickets. The combined section is capped at five.
     if nebos_section:
         blocks += ["", nebos_section]
 
@@ -105,6 +113,15 @@ def _send_slack(text: str) -> None:
         raise SystemExit(f"slack post failed: {r.get('error')}")
 
 
+def _send_telegram(text: str, *, run=subprocess.run) -> None:
+    """Send the digest to Shawn's Telegram DM via the Hermes gateway."""
+    hermes = Path.home() / ".local" / "bin" / "hermes"
+    r = run([str(hermes), "send", "-t", "telegram", "-s", "☀️ Morning Digest", text],
+            capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise SystemExit(f"telegram post failed: {r.stderr[-200:]}")
+
+
 def run_alerts(daily_by_metric, bella_series, today, *,
                send=alerts.send_telegram, state_path=alerts.STATE_PATH) -> None:
     """Detect troublesome patterns and Telegram only the newly-appeared ones."""
@@ -118,13 +135,17 @@ def main() -> int:
     today = datetime.now(PT).date()
     daily_by_metric = health.fetch_daily_by_metric()
     bella_section = bella.build_section(today)  # also refreshes Bella's history
-    nebos_section = nebos.build_section(today)
+    nebos_section = build_shawn_action_section(today)
     text = build_digest(today, daily_by_metric=daily_by_metric,
                         bella_section=bella_section, nebos_section=nebos_section)
     dry = bool(os.environ.get("DRY_RUN"))
-    if not dry and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
+    delivery = os.environ.get("DIGEST_DELIVERY", "telegram").lower()
+    if not dry and delivery == "slack" and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
         _send_slack(text)
         print("morning digest posted to Slack.")
+    elif not dry:
+        _send_telegram(text)
+        print("morning digest posted to Telegram.")
     else:
         print(text)
     bella_series = bella.load_history(bella.DEFAULT_HISTORY)

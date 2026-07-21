@@ -8,9 +8,9 @@ Personal/work digests for Shawn (Team Nebula), delivered to Slack as the
 Two digests, both posted to Slack DM **`D0AGFSC9PHN`** (Shawn ↔ NEBOS Assist bot
 `U0AFMJ70JV8`) via `morning._send_slack` (`SLACK_BOT_TOKEN` + `SLACK_CHANNEL`):
 
-- **Morning Digest** — `morning.py`. Order: `🎯 Top 5 — NEBOS` (lead) →
-  `📋 Still pending` (open action items carried forward from the last few days
-  of calls, Shawn-owned first; from `retro.build_pending_section`) → `💪 You`
+- **Morning Digest** — `morning.py`. Order: `🎯 Shawn — Top 5 actions` (lead;
+  up to five concrete actions merged from open Linear tickets assigned to Shawn
+  and recent meeting notes that explicitly name Shawn as owner) → `💪 You`
   (health trends) → `🐕 Bella` (collar trends) → `📅 Meetings`.
 - **Call Retro** — `retro.py`. End-of-day: re-synced `🎯 Top 5 — NEBOS` → `📞 Calls`
   section recapping every call today, sourced from the **NEBOS meeting store**

@@ -156,5 +156,48 @@ class BuildSectionTests(unittest.TestCase):
         self.assertNotIn("Luis Patino", out)
 
 
+class ShawnActionSectionTests(unittest.TestCase):
+    def _linear_call(self, slug, args):
+        self.assertEqual(slug, "LINEAR_RUN_QUERY_OR_MUTATION")
+        self.assertEqual(args["variables"], {})
+        return LINEAR_RESPONSE
+
+    def test_combines_only_shawn_meeting_actions_and_assigned_linear(self):
+        items = [
+            {"mine": True, "text": "Shawn to send the revised SOW to Andres.",
+             "title": "Carlos Sync", "day": "yesterday", "age_days": 1},
+            {"mine": False, "text": "Maira to prepare the deck.",
+             "title": "Sales Sync", "day": "today", "age_days": 0},
+        ]
+        out = nebos.build_shawn_action_section(
+            TODAY, env={}, call=self._linear_call, meeting_items=items)
+        self.assertIn("🎯 Shawn — Top 5 actions", out)
+        self.assertIn("Send the revised SOW", out)
+        self.assertNotIn("Shawn to send", out)
+        self.assertIn("meeting note: Carlos Sync, yesterday", out)
+        self.assertIn("Follow up on Lockheed Martin — Linear TMNS-82", out)
+        self.assertNotIn("Maira to prepare", out)
+        self.assertNotIn("Reply to Luis", out)
+
+    def test_meeting_actions_work_when_linear_is_unconfigured(self):
+        out = nebos.build_shawn_action_section(TODAY, env={}, meeting_items=[
+            {"mine": True, "text": "Shawn to send pricing.",
+             "title": "Pricing Call", "day": "today", "age_days": 0},
+        ])
+        self.assertIn("Send pricing", out)
+
+    def test_combined_actions_are_deduped_and_capped_at_five(self):
+        items = [
+            {"mine": True, "text": f"Shawn to do item {i}.",
+             "title": f"Call {i}", "day": "today", "age_days": 0}
+            for i in range(7)
+        ]
+        items.append({**items[0], "title": "Duplicate Call"})
+        out = nebos.build_shawn_action_section(TODAY, env={}, meeting_items=items)
+        bullets = [line for line in out.splitlines() if line.startswith("• ")]
+        self.assertEqual(len(bullets), 5)
+        self.assertEqual(sum("Do item 0" in line for line in bullets), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

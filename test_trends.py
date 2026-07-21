@@ -237,6 +237,17 @@ class YouSectionTests(unittest.TestCase):
 
 
 class BellaSectionTests(unittest.TestCase):
+    def test_fi_native_direction_overrides_local_history(self):
+        series = {
+            "steps": _series(TODAY, 17, 8000),
+            "eating_events": _flat_then(TODAY, 2, [6, 7, 8]),
+        }
+        out = trends.render_pet_section(
+            "Bella", series, TODAY, {"eating_events": "down"})
+        eat = next(l for l in out.splitlines() if "Eating" in l)
+        self.assertIn("less", eat.lower())
+        self.assertNotIn("more often", eat.lower())
+
     def test_bella_trends_render_without_numbers(self):
         steps = _flat_then(TODAY, 8000, [10000, 11000, 12000])   # up
         sleep = _flat_then(TODAY, 720.0, [560, 540, 520])         # down
@@ -322,6 +333,11 @@ class BellaSectionTests(unittest.TestCase):
 
 
 class ReadableSignalTests(unittest.TestCase):
+    def test_true_when_fi_supplies_native_behavior_move(self):
+        series = {"eating_events": {"2026-06-12": 1.0}}
+        self.assertTrue(trends.has_readable_signal(
+            series, TODAY, {"eating_events": "down"}))
+
     """has_readable_signal — True only when some metric has enough history for a
     real trend; drives "drop the pet section entirely when it's all filler"."""
 

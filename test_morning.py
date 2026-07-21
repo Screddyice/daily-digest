@@ -209,10 +209,12 @@ class MainAlertsGuardTests(unittest.TestCase):
     def _patches(self):
         return mock.patch.multiple(
             morning,
-            _send_slack=mock.DEFAULT, run_alerts=mock.DEFAULT)
+            _send_slack=mock.DEFAULT, _send_telegram=mock.DEFAULT,
+            run_alerts=mock.DEFAULT)
 
     def test_digest_no_alerts_posts_but_skips_alerts(self):
-        env = {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0", "DIGEST_NO_ALERTS": "1"}
+        env = {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0",
+               "DIGEST_DELIVERY": "slack", "DIGEST_NO_ALERTS": "1"}
         with mock.patch.dict(morning.os.environ, env, clear=True), \
                 mock.patch.object(morning.health, "fetch_daily_by_metric", return_value={}), \
                 mock.patch.object(morning.bella, "build_section", return_value=None), \
@@ -224,7 +226,8 @@ class MainAlertsGuardTests(unittest.TestCase):
             m["run_alerts"].assert_not_called()
 
     def test_alerts_run_by_default(self):
-        env = {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0"}
+        env = {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0",
+               "DIGEST_DELIVERY": "slack"}
         with mock.patch.dict(morning.os.environ, env, clear=True), \
                 mock.patch.object(morning.health, "fetch_daily_by_metric", return_value={}), \
                 mock.patch.object(morning.bella, "build_section", return_value=None), \
@@ -233,6 +236,53 @@ class MainAlertsGuardTests(unittest.TestCase):
                 self._patches() as m:
             self.assertEqual(morning.main(), 0)
             m["run_alerts"].assert_called_once()
+
+
+class DeliveryRoutingTests(unittest.TestCase):
+    """DIGEST_DELIVERY routes the digest: telegram (default) vs slack."""
+
+    def _run_main(self, env):
+        with mock.patch.dict(morning.os.environ, env, clear=True), \
+                mock.patch.object(morning.health, "fetch_daily_by_metric", return_value={}), \
+                mock.patch.object(morning.bella, "build_section", return_value=None), \
+                mock.patch.object(morning.nebos, "build_section", return_value=None), \
+                mock.patch.object(morning.meetings, "build_section", return_value=None), \
+                mock.patch.multiple(morning, _send_slack=mock.DEFAULT,
+                                    _send_telegram=mock.DEFAULT,
+                                    run_alerts=mock.DEFAULT) as m:
+            self.assertEqual(morning.main(), 0)
+        return m
+
+    def test_default_delivery_is_telegram(self):
+        m = self._run_main({"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0"})
+        m["_send_telegram"].assert_called_once()
+        m["_send_slack"].assert_not_called()
+
+    def test_slack_delivery_opt_in(self):
+        m = self._run_main({"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL": "D0",
+                            "DIGEST_DELIVERY": "slack"})
+        m["_send_slack"].assert_called_once()
+        m["_send_telegram"].assert_not_called()
+
+    def test_send_telegram_invokes_hermes_cli(self):
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            return mock.Mock(returncode=0, stderr="")
+
+        morning._send_telegram("digest body", run=fake_run)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(str(calls[0][0]).endswith("hermes"))
+        self.assertEqual(calls[0][1:4], ["send", "-t", "telegram"])
+        self.assertIn("digest body", calls[0])
+
+    def test_send_telegram_failure_raises(self):
+        def fake_run(argv, **kwargs):
+            return mock.Mock(returncode=1, stderr="boom")
+
+        with self.assertRaises(SystemExit):
+            morning._send_telegram("digest body", run=fake_run)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from http.cookiejar import CookieJar
 from pathlib import Path
 
@@ -33,6 +33,7 @@ FI_API = "https://api.tryfi.com"
 DEFAULT_HISTORY = Path.home() / ".daily-digest" / "bella_history.json"
 DEFAULT_PROFILE = Path.home() / ".daily-digest" / "bella_profile.json"
 HISTORY_KEEP_DAYS = 60
+MAX_REST_MINUTES_PER_DAY = 24 * 60
 # Steps and behavior-event counts accumulate one reading per run, so they need a
 # store that survives between runs. On a durable host that's the local file
 # above; in an ephemeral cloud sandbox the filesystem is wiped each run, so set
@@ -233,9 +234,8 @@ def parse_minutes(text: str | None) -> float | None:
 def parse_health_trends(resp: dict) -> dict[str, float]:
     """{history_key: today's value} for every enabled trend.
 
-    A trend present but with a null summary means the behavior was tracked and
-    simply didn't happen today — recorded as 0, not omitted, so a behavior
-    going quiet still registers as a downward trend.
+    Fi uses null summaries for unavailable/incomplete readings, so only parsed
+    values are recorded. An explicit ``0 events`` remains a real zero.
     """
     t = _walk(resp, "getPetHealthTrendsForPet") or {}
     out: dict[str, float] = {}
@@ -249,22 +249,71 @@ def parse_health_trends(resp: dict) -> dict[str, float]:
             sc = tr.get("summaryComponents") or {}
             ev_key, dur_key = keys
             if ev_key is not None:
-                out[ev_key] = parse_count(sc.get("eventsSummary")) or 0.0
+                value = parse_count(sc.get("eventsSummary"))
+                if value is not None:
+                    out[ev_key] = value
             if dur_key is not None:
-                out[dur_key] = parse_minutes(sc.get("durationSummary")) or 0.0
+                value = parse_minutes(sc.get("durationSummary"))
+                if value is not None:
+                    out[dur_key] = value
     return out
 
 
-def parse_rest_summaries(resp: dict) -> dict[str, float]:
-    """{iso_day: minutes of rest (sleep + naps)} — Fi reports durations in seconds."""
+def parse_health_trend_directions(resp: dict) -> dict[str, str]:
+    """Fi-native behavior directions keyed like the stored event series.
+
+    Event change is authoritative. Some behaviors (notably licking) only carry
+    a duration change, which is the best native fallback for the behavior line.
+    """
+    t = _walk(resp, "getPetHealthTrendsForPet") or {}
+    out: dict[str, str] = {}
+    aliases = {"UP": "up", "DOWN": "down", "STEADY": "steady", "SAME": "steady"}
+    for tr in t.get("behaviorTrends") or []:
+        if tr.get("disabled"):
+            continue
+        keys = TREND_KEYS.get(tr.get("title"))
+        if not keys or keys[0] is None:
+            continue
+        sc = tr.get("summaryComponents") or {}
+        change = sc.get("eventsChange") or sc.get("durationChange") or {}
+        direction = aliases.get(str(change.get("direction") or "").upper())
+        if direction:
+            out[keys[0]] = direction
+    return out
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_rest_summaries(resp: dict, *, now: datetime | None = None) -> dict[str, float]:
+    """Validated daily sleep+naps in minutes; Fi durations are seconds.
+
+    Fi occasionally emits corrupt multi-week nap durations and partial current
+    periods. Neither is allowed into the durable baseline.
+    """
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     out: dict[str, float] = {}
     for s in _walk(resp, "restSummaries") or []:
-        day = (s.get("start") or "")[:10]
+        start = _parse_timestamp(s.get("start") or "")
+        day = start.date().isoformat() if start else ""
         amounts = _walk(s, "sleepAmounts") or []
-        if not day or not amounts:
+        if not day or not amounts or start + timedelta(days=1) > now:
             continue
-        total = sum(float(a.get("duration") or 0) for a in amounts) / 60
-        if total:  # 0 = the in-progress day before any rest is logged, not a real zero
+        try:
+            durations = [float(a["duration"]) for a in amounts]
+        except (KeyError, TypeError, ValueError):
+            continue
+        has_sleep = any(a.get("type") == "SLEEP" and duration > 0
+                        for a, duration in zip(amounts, durations))
+        total = sum(durations) / 60
+        if has_sleep and 0 < total <= MAX_REST_MINUTES_PER_DAY:
             out[day] = total
     return out
 
@@ -291,6 +340,20 @@ def _prune(hist: dict) -> None:
     for series in hist.values():
         for stale in sorted(series)[:-HISTORY_KEEP_DAYS]:
             del series[stale]
+
+
+def sanitize_history(hist: dict) -> dict:
+    """Remove impossible Fi sleep readings from an existing history in place."""
+    sleep = hist.get("sleep")
+    if isinstance(sleep, dict):
+        for day, value in list(sleep.items()):
+            try:
+                valid = 0 < float(value) <= MAX_REST_MINUTES_PER_DAY
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                del sleep[day]
+    return hist
 
 
 def update_history(path: Path, metric: str, day: str, value: float) -> None:
@@ -380,10 +443,13 @@ def build_section(today: date | None = None, *, env: dict | None = None,
         steps_today = parse_daily_steps(gql("steps", pet_id=pet_id))
         sleep = parse_rest_summaries(gql("rest", pet_id=pet_id))
         try:
-            behaviors_today = parse_health_trends(gql("trends", pet_id=pet_id))
+            trends_response = gql("trends", pet_id=pet_id)
+            behaviors_today = parse_health_trends(trends_response)
+            behavior_directions = parse_health_trend_directions(trends_response)
         except Exception as exc:  # behaviors are newer/less stable — don't sink the rest
             logger.warning("bella: behavior-trends fetch failed: %s", exc)
             behaviors_today = {}
+            behavior_directions = {}
         try:
             save_profile(profile_path, parse_profile(gql("profile", pet_id=pet_id), today))
         except Exception as exc:
@@ -395,7 +461,7 @@ def build_section(today: date | None = None, *, env: dict | None = None,
     # One load + one save per run (the store may be a remote gist). Steps and
     # behavior counts accumulate; sleep is a fresh multi-day window from Fi.
     load, save = _history_store(env, history_path)
-    hist = load()
+    hist = sanitize_history(load())
     if steps_today is not None:
         _record(hist, "steps", today.isoformat(), steps_today)
     for day, minutes in sleep.items():  # the feed is shallow; accumulate for depth
@@ -409,9 +475,9 @@ def build_section(today: date | None = None, *, env: dict | None = None,
                *{dk for ek, dk in TREND_KEYS.values() if dk})}
     if not trends.has_fresh_data(series, today):
         return None  # collar feed frozen or empty — drop the section
-    if not trends.has_readable_signal(series, today):
+    if not trends.has_readable_signal(series, today, behavior_directions):
         # Data arrived, but there's not yet enough history to read any trend —
         # the section would be all "baseline building" filler. Per Shawn: if
         # there's nothing meaningful from the collar, don't mention Bella at all.
         return None
-    return trends.render_pet_section(pet_name, series, today)
+    return trends.render_pet_section(pet_name, series, today, behavior_directions)
