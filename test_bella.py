@@ -8,7 +8,7 @@ accumulation, and graceful degradation when Fi creds are absent.
 import json
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -110,7 +110,8 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(bella.parse_daily_steps({"data": {"pet": {}}}))
 
     def test_parse_rest_summaries_sums_sleep_and_nap_minutes_per_day(self):
-        out = bella.parse_rest_summaries(REST_RESPONSE)
+        out = bella.parse_rest_summaries(
+            REST_RESPONSE, now=datetime(2026, 6, 14, tzinfo=timezone.utc))
         self.assertEqual(out["2026-06-12"], (28800 + 3600) / 60)
         self.assertEqual(out["2026-06-11"], 30000 / 60)
 
@@ -125,7 +126,8 @@ class ParseTests(unittest.TestCase):
             {"start": "2026-06-11T07:00:00Z",
              "data": {"sleepAmounts": [{"type": "SLEEP", "duration": 30000}]}},
         ]}}}}
-        out = bella.parse_rest_summaries(resp)
+        out = bella.parse_rest_summaries(
+            resp, now=datetime(2026, 6, 14, tzinfo=timezone.utc))
         self.assertNotIn("2026-06-12", out)
         self.assertIn("2026-06-11", out)
 
@@ -156,11 +158,48 @@ class TrendParseTests(unittest.TestCase):
         self.assertEqual(out["activity_steps"], 325.0)
         self.assertEqual(out["rest_min"], 419.0)
 
-    def test_parse_health_trends_records_zero_for_no_event_behaviors(self):
-        """A behavior present but with null summary = zero events today, not missing."""
+    def test_parse_health_trends_skips_null_summaries(self):
+        """Null means unavailable, not zero, and must not pollute history."""
         out = bella.parse_health_trends(TRENDS_RESPONSE)
-        self.assertEqual(out["barking_events"], 0.0)
-        self.assertEqual(out["scratching_events"], 0.0)
+        self.assertNotIn("barking_events", out)
+        self.assertNotIn("scratching_events", out)
+
+    def test_parse_health_trends_preserves_explicit_zero(self):
+        resp = {"data": {"getPetHealthTrendsForPet": {"behaviorTrends": [{
+            "title": "Barking", "disabled": False,
+            "summaryComponents": {"eventsSummary": "0 events"}}]}}}
+        self.assertEqual(bella.parse_health_trends(resp)["barking_events"], 0.0)
+
+    def test_parse_health_trend_directions_uses_fi_and_duration_fallback(self):
+        resp = {"data": {"getPetHealthTrendsForPet": {"behaviorTrends": [
+            {"title": "Eating", "disabled": False, "summaryComponents": {
+                "eventsChange": {"direction": "DOWN"},
+                "durationChange": {"direction": "UP"}}},
+            {"title": "Licking", "disabled": False, "summaryComponents": {
+                "eventsChange": None, "durationChange": {"direction": "DOWN"}}},
+        ]}}}
+        self.assertEqual(bella.parse_health_trend_directions(resp), {
+            "eating_events": "down", "licking_events": "down"})
+
+    def test_parse_rest_rejects_corrupt_and_nap_only_days(self):
+        resp = {"data": {"restSummaries": [
+            {"start": "2026-06-10T00:00:00Z", "sleepAmounts": [
+                {"type": "SLEEP", "duration": 30000},
+                {"type": "NAP", "duration": 2000000}]},
+            {"start": "2026-06-11T00:00:00Z", "sleepAmounts": [
+                {"type": "NAP", "duration": 16060}]},
+        ]}}
+        out = bella.parse_rest_summaries(
+            resp, now=datetime(2026, 6, 14, tzinfo=timezone.utc))
+        self.assertEqual(out, {})
+
+    def test_parse_rest_skips_incomplete_current_period(self):
+        resp = {"data": {"restSummaries": [{
+            "start": "2026-06-12T16:00:00Z", "sleepAmounts": [
+                {"type": "SLEEP", "duration": 30000}]}]}}
+        out = bella.parse_rest_summaries(
+            resp, now=datetime(2026, 6, 13, 12, tzinfo=timezone.utc))
+        self.assertEqual(out, {})
 
     def test_parse_health_trends_skips_disabled_behaviors(self):
         resp = {"data": {"getPetHealthTrendsForPet": {"period": "DAY",
@@ -206,6 +245,12 @@ class ProfileTests(unittest.TestCase):
 
 
 class HistoryTests(unittest.TestCase):
+    def test_sanitize_history_removes_impossible_sleep_only(self):
+        hist = {"sleep": {"good": 700, "huge": 30000, "zero": 0},
+                "steps": {"day": 0}}
+        self.assertEqual(bella.sanitize_history(hist), {
+            "sleep": {"good": 700}, "steps": {"day": 0}})
+
     def test_history_appends_and_overwrites_per_day(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bella_history.json"
