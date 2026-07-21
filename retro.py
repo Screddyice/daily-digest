@@ -203,12 +203,39 @@ def split_next_steps(bullets: list[str]) -> tuple[list[str], str | None]:
     return rest, nxt
 
 
+def _attendee_email(attendee) -> str:
+    """Normalize the attendee shapes returned by old and current NEBOS APIs.
+
+    Older meeting records store attendees as email strings. Newer records use
+    objects such as ``{"email": "person@example.com", "name": "Person"}``.
+    Ignore malformed entries instead of allowing one meeting to sink a digest.
+    """
+    if isinstance(attendee, str):
+        return attendee
+    if not isinstance(attendee, dict):
+        return ""
+    for key in ("email", "emailAddress", "address"):
+        value = attendee.get(key)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            for nested_key in ("email", "address"):
+                nested = value.get(nested_key)
+                if isinstance(nested, str):
+                    return nested
+    return ""
+
+
 def call_partners(attendees) -> str:
     """A short 'with' label: the external orgs on the invite (domains outside
     the company), title-cased, deduped. Empty when the call is internal-only."""
     orgs = []
-    for a in attendees or []:
-        m = re.search(r"@([\w.-]+)", a or "")
+    if isinstance(attendees, dict):
+        attendees = [attendees]
+    elif not isinstance(attendees, (list, tuple, set)):
+        attendees = []
+    for attendee in attendees:
+        m = re.search(r"@([\w.-]+)", _attendee_email(attendee))
         if not m:
             continue
         domain = m.group(1).lower()

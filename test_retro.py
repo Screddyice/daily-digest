@@ -103,6 +103,21 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(retro.call_partners(DISCOVERY["attendees"]), "Rivus")
         self.assertEqual(retro.call_partners(["shawn@teamnebula.ai", "x@aiadvantageagency.co"]), "")
 
+    def test_partners_accept_structured_attendees(self):
+        attendees = [
+            {"email": "shawn@teamnebula.ai", "name": "Shawn"},
+            {"email": "jorge@rivus.mx", "name": "Jorge"},
+            {"emailAddress": {"address": "monica@volttruck.com"}},
+        ]
+        self.assertEqual(retro.call_partners(attendees), "Rivus, Volttruck")
+
+    def test_partners_ignore_malformed_attendees(self):
+        attendees = [None, 42, {}, {"name": "No email"}, {"email": None}]
+        self.assertEqual(retro.call_partners(attendees), "")
+
+    def test_partners_accept_single_attendee_object(self):
+        self.assertEqual(retro.call_partners({"email": "jorge@rivus.mx"}), "Rivus")
+
 
 class RenderTests(unittest.TestCase):
     def test_one_call_has_title_time_summary_next(self):
