@@ -89,5 +89,61 @@ class NoHAEConfiguredTests(unittest.TestCase):
         self.assertEqual(called, [])  # no HAE requests attempted
 
 
+class PhoneStateTests(unittest.TestCase):
+    """Freshness guard for iPhone-sourced activity metrics."""
+
+    @staticmethod
+    def _activity(end: date) -> dict:
+        return {
+            "step_count": _series(end, 8, 3138),
+            "active_energy": _series(end, 8, 86),
+            "apple_exercise_time": _series(end, 8, 2),
+        }
+
+    def test_fresh_phone_renders_comparisons_no_stale_line(self):
+        out = health.render_section(self._activity(TODAY), TODAY)
+        self.assertIn("vs yesterday", out)
+        self.assertIn("*Activity", out)
+        self.assertNotIn("📵", out)
+
+    def test_stale_phone_shows_gap_line_and_suppresses_comparisons(self):
+        out = health.render_section(self._activity(TODAY - timedelta(days=8)), TODAY)
+        self.assertIn("📵 No phone health data for 8 days (last data May 19)", out)
+        self.assertIn("Last activity (May 19): 3,138 steps · 86 kcal · 2 min exercise", out)
+        self.assertNotIn("vs yesterday", out)
+        self.assertNotIn("*Activity", out)
+        self.assertNotIn("average day", out)
+
+    def test_gap_two_days_is_fresh(self):
+        out = health.render_section(self._activity(TODAY - timedelta(days=2)), TODAY)
+        self.assertNotIn("📵", out)
+        self.assertIn("*Activity", out)
+
+    def test_gap_three_days_is_stale(self):
+        out = health.render_section(self._activity(TODAY - timedelta(days=3)), TODAY)
+        self.assertIn("📵 No phone health data for 3 days", out)
+
+    def test_no_activity_data_shows_thirty_day_message(self):
+        data = {"heart_rate_variability": _series(TODAY - timedelta(days=20), 8, 45)}
+        out = health.render_section(data, TODAY)
+        self.assertIn("📵 No phone health data in the last 30 days — check Health Auto Export.", out)
+
+    def test_stale_phone_and_stale_wrist_show_both_lines(self):
+        data = self._activity(TODAY - timedelta(days=8))
+        data["heart_rate_variability"] = _series(TODAY - timedelta(days=34), 8, 38)
+        out = health.render_section(data, TODAY)
+        self.assertIn("📵 No phone health data for 8 days", out)
+        self.assertIn("⌚ Watch off 34 days", out)
+
+    def test_stale_last_known_line_skips_older_metrics(self):
+        data = {
+            "step_count": _series(TODAY - timedelta(days=8), 8, 3138),
+            "active_energy": _series(TODAY - timedelta(days=20), 8, 86),
+        }
+        out = health.render_section(data, TODAY)
+        self.assertIn("Last activity (May 19): 3,138 steps", out)
+        self.assertNotIn("kcal", out)
+
+
 if __name__ == "__main__":
     unittest.main()
