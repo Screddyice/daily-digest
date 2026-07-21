@@ -2,10 +2,11 @@
 """Live, watch-aware health section for the morning digest.
 
 Reads CURRENT values straight from the self-hosted Health Auto Export (HAE)
-server every run, so iPhone-sourced activity (steps, energy, exercise) is
-always fresh and Apple-Watch recovery metrics (HRV, resting HR, sleep) show up
-when the watch has been worn. When the watch has been off, the section
-degrades to an explicit "watch off N days" line instead of going blank.
+server every run. Both data paths are freshness-guarded: when the watch has
+been off, recovery metrics degrade to an explicit "watch off N days" line,
+and when the iPhone stops pushing entirely, activity degrades to a "no phone
+health data since <date>" line (📵) instead of rendering stale numbers as
+current.
 
 Stdlib only. Pure rendering (`render_section`) is separated from network I/O
 (`build_section`) so the watch-state / degradation logic is unit-testable.
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 LOOKBACK_DAYS = 30
 WRIST_FRESH_DAYS = 2        # watch metrics older than this read as "off-wrist"
+PHONE_FRESH_DAYS = 2        # activity metrics older than this read as "phone not pushing"
 MIN_BASELINE_SAMPLES = 7    # need ~a week before z-scores mean anything
 RECENT_WINDOW_DAYS = 3
 
@@ -235,6 +237,41 @@ def _signed_pct(delta: float, base: float) -> str:
     return f"{delta / base * 100:+.0f}%"
 
 
+def staleness_note(daily_by_metric: dict[str, dict[str, float]], today: date,
+                   *, fresh_days: int = 1) -> str | None:
+    """📵 note explaining that iPhone activity has stopped arriving; None while
+    fresh. The default threshold (gap > 1 day) complements the digest's
+    has_fresh_data gate (STALE_AFTER_DAYS = 2) so build_digest swaps its
+    dropped You section for this note the moment the feed freezes;
+    render_section passes PHONE_FRESH_DAYS for the legacy numeric section."""
+    gaps = [
+        g for g in (
+            _days_since_last(daily_by_metric.get(m, {}), today)
+            for m, _how, _label, _fmt in ACTIVITY_METRICS
+        )
+        if g is not None
+    ]
+    gap = min(gaps) if gaps else None
+    if gap is None:
+        return f"📵 No phone health data in the last {LOOKBACK_DAYS} days — check Health Auto Export."
+    if gap <= fresh_days:
+        return None
+    last_date = today - timedelta(days=gap)
+    last_iso = last_date.isoformat()
+    parts = [
+        f"{fmt.format(d[max(d)])} {label}"
+        for metric, _how, label, fmt in ACTIVITY_METRICS
+        if (d := daily_by_metric.get(metric, {})) and max(d) == last_iso
+    ]
+    note = (
+        f"📵 No phone health data for {gap} days (last data {last_date:%b %-d}) — "
+        f"open Health Auto Export on the iPhone and re-run its automation."
+    )
+    if parts:
+        note += f"\n   Last activity ({last_date:%b %-d}): " + " · ".join(parts)
+    return note
+
+
 # --------------------------------------------------------------------- render
 def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) -> str:
     """Render the health section. Pure.
@@ -243,37 +280,55 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     then a *comparisons* line that names its reference points explicitly —
     `vs yesterday X (±Δ)` and `vs week ago Y (±Δ)` — so the reader never has to
     guess what the trend is being measured against.
+
+    The activity block has three states keyed off phone freshness: fresh
+    (≤ PHONE_FRESH_DAYS: full value + comparison lines), stale (📵 line with
+    the last-data date + a last-known snapshot), and empty (📵 no data in the
+    lookback window).
     """
     L: list[str] = [f"\U0001f4aa Health — {today:%a %b %-d}", ""]
 
-    # ---------- Activity (iPhone-sourced; always shown if any data) ----------
+    # ---------- Activity (iPhone-sourced; freshness-guarded) ----------
     steps = daily_by_metric.get("step_count", {})
-    activity_day = max(steps) if steps else None
-    parts: list[str] = []
-    for metric, _how, label, fmt in ACTIVITY_METRICS:
-        d = daily_by_metric.get(metric, {})
-        if d:
-            parts.append(f"{fmt.format(d[max(d)])} {label}")
-    if parts:
-        day_lbl = f" ({date.fromisoformat(activity_day):%a})" if activity_day else ""
-        today_steps = steps[max(steps)] if steps else 0
-        avg7 = _recent_avg(steps, 7) or 0
-        label = _activity_label(today_steps, avg7) if avg7 else ""
-        header = f"*Activity{day_lbl}:* " + " · ".join(parts)
-        if label:
-            header += f"  _{label}_"
-        L.append(header)
-        if steps:
-            comps: list[str] = []
-            y = _value_n_days_ago(steps, today, 1)
-            w = _value_n_days_ago(steps, today, 7)
-            if y is not None:
-                comps.append(f"vs yesterday {y:,.0f} ({_signed_pct(today_steps - y, y)})")
-            if w is not None:
-                comps.append(f"vs week ago {w:,.0f} ({_signed_pct(today_steps - w, w)})")
-            if comps:
-                L.append("   " + "  ·  ".join(comps))
+    phone_gaps = [
+        g for g in (
+            _days_since_last(daily_by_metric.get(m, {}), today)
+            for m, _how, _label, _fmt in ACTIVITY_METRICS
+        )
+        if g is not None
+    ]
+    phone_gap = min(phone_gaps) if phone_gaps else None
+
+    if phone_gap is None or phone_gap > PHONE_FRESH_DAYS:
+        L.append(staleness_note(daily_by_metric, today, fresh_days=PHONE_FRESH_DAYS))
         L.append("")
+    else:
+        activity_day = max(steps) if steps else None
+        parts: list[str] = []
+        for metric, _how, label, fmt in ACTIVITY_METRICS:
+            d = daily_by_metric.get(metric, {})
+            if d:
+                parts.append(f"{fmt.format(d[max(d)])} {label}")
+        if parts:
+            day_lbl = f" ({date.fromisoformat(activity_day):%a})" if activity_day else ""
+            today_steps = steps[max(steps)] if steps else 0
+            avg7 = _recent_avg(steps, 7) or 0
+            label = _activity_label(today_steps, avg7) if avg7 else ""
+            header = f"*Activity{day_lbl}:* " + " · ".join(parts)
+            if label:
+                header += f"  _{label}_"
+            L.append(header)
+            if steps:
+                comps: list[str] = []
+                y = _value_n_days_ago(steps, today, 1)
+                w = _value_n_days_ago(steps, today, 7)
+                if y is not None:
+                    comps.append(f"vs yesterday {y:,.0f} ({_signed_pct(today_steps - y, y)})")
+                if w is not None:
+                    comps.append(f"vs week ago {w:,.0f} ({_signed_pct(today_steps - w, w)})")
+                if comps:
+                    L.append("   " + "  ·  ".join(comps))
+            L.append("")
 
     # ---------- Watch state drives recovery + sleep ----------
     gaps = [

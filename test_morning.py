@@ -45,6 +45,7 @@ class BuildDigestTests(unittest.TestCase):
         self.assertIn("🐕 Bella", out)
         self.assertTrue(out.index("📅 Meetings") > out.index("🐕 Bella"))
         self.assertIn("9:00 AM — Rivus sync", out)
+        self.assertNotIn("📵", out)   # fresh feed → no staleness note
 
     def test_empty_meetings_section_is_omitted(self):
         out = morning.build_digest(TODAY, daily_by_metric=_you_data(),
@@ -91,22 +92,24 @@ class BuildDigestTests(unittest.TestCase):
         self.assertIn("🐕 Bella", out)
         self.assertIn("📅 Meetings", out)
 
-    def test_stale_health_omits_you_section(self):
-        """Health feed frozen for days → no new data → You section dropped,
-        no warning line either; Bella's fresh section still shows."""
+    def test_stale_health_swaps_you_section_for_staleness_note(self):
+        """Health feed frozen for days → no stale trends re-rendered, but the
+        digest says WHY health is missing (📵 note with the last-data date)
+        instead of dropping the section silently; Bella still shows."""
         stale = _you_data(TODAY - timedelta(days=3))
         out = morning.build_digest(TODAY, daily_by_metric=stale,
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
                                    llm_body=None, meetings_section="", nebos_section="")
         self.assertNotIn("💪 You", out)
-        self.assertNotIn("⚠️", out)
+        self.assertIn("📵 No phone health data for 3 days (last data Jun 9)", out)
         self.assertIn("🐕 Bella", out)
 
-    def test_no_health_data_omits_you_section(self):
+    def test_no_health_data_shows_empty_note(self):
         out = morning.build_digest(TODAY, daily_by_metric={},
                                    bella_section="🐕 Bella\n\n• Activity: steady.",
                                    llm_body=None, meetings_section="", nebos_section="")
         self.assertNotIn("💪 You", out)
+        self.assertIn("📵 No phone health data in the last 30 days", out)
         self.assertIn("🐕 Bella", out)
 
     def test_none_bella_section_is_omitted(self):

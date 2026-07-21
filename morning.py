@@ -68,8 +68,9 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
     if pending_section:
         blocks += ["", pending_section]
 
-    # You section — included only when the health feed has new data. A frozen or
-    # absent feed drops the section entirely rather than re-render stale trends.
+    # You section — full trends only when the health feed has new data. A frozen
+    # or absent feed never re-renders stale trends; instead a one-line 📵 note
+    # says why health is missing and how to revive it (health.staleness_note).
     if trends.has_fresh_data(daily_by_metric, today):
         if llm_body is _UNSET:
             # Snapshot this export, compare against the previous one via the LLM.
@@ -84,6 +85,10 @@ def build_digest(today=None, *, daily_by_metric=None, bella_section=_UNSET,
         you_block = llm_body or trends.render_you_section(daily_by_metric, today)
         if you_block:  # None when every metric is at baseline — drop, don't show a bare header
             blocks += ["", you_block]
+    else:
+        stale_note = health.staleness_note(daily_by_metric, today)
+        if stale_note:
+            blocks += ["", stale_note]
 
     # Bella section — build_section returns None when her collar has no new data,
     # in which case her section is dropped too.
