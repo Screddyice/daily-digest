@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 
 import alerts
 import bella
@@ -106,6 +108,15 @@ def _send_slack(text: str) -> None:
         raise SystemExit(f"slack post failed: {r.get('error')}")
 
 
+def _send_telegram(text: str, *, run=subprocess.run) -> None:
+    """Send the digest to Shawn's Telegram DM via the Hermes gateway."""
+    hermes = Path.home() / ".local" / "bin" / "hermes"
+    r = run([str(hermes), "send", "-t", "telegram", "-s", "☀️ Morning Digest", text],
+            capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise SystemExit(f"telegram post failed: {r.stderr[-200:]}")
+
+
 def run_alerts(daily_by_metric, bella_series, today, *,
                send=alerts.send_telegram, state_path=alerts.STATE_PATH) -> None:
     """Detect troublesome patterns and Telegram only the newly-appeared ones."""
@@ -123,9 +134,13 @@ def main() -> int:
     text = build_digest(today, daily_by_metric=daily_by_metric,
                         bella_section=bella_section, nebos_section=nebos_section)
     dry = bool(os.environ.get("DRY_RUN"))
-    if not dry and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
+    delivery = os.environ.get("DIGEST_DELIVERY", "telegram").lower()
+    if not dry and delivery == "slack" and os.environ.get("SLACK_BOT_TOKEN") and os.environ.get("SLACK_CHANNEL"):
         _send_slack(text)
         print("morning digest posted to Slack.")
+    elif not dry:
+        _send_telegram(text)
+        print("morning digest posted to Telegram.")
     else:
         print(text)
     bella_series = bella.load_history(bella.DEFAULT_HISTORY)
