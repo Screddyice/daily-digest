@@ -41,6 +41,24 @@ only, matching the module's existing wrist-gap pattern.
 4. Wrist/watch logic untouched. When both phone and wrist are stale the
    section shows the 📵 line followed by the existing ⌚ line.
 
+### Addendum (discovered during implementation)
+
+The DM'd digest does not render `health.render_section` at all — that is
+the legacy numeric section. `morning.build_digest` gates the You section
+on `trends.has_fresh_data` (STALE_AFTER_DAYS = 2) and, when the feed is
+frozen, **silently dropped the section** — which is what Shawn has been
+seeing since ~2026-07-16. The user-visible fix therefore also adds:
+
+5. `health.staleness_note(daily_by_metric, today, *, fresh_days=1)` — the
+   shared 📵 note builder. Default threshold (gap > 1 day) complements the
+   digest gate exactly; `render_section` calls it with
+   `fresh_days=PHONE_FRESH_DAYS` to keep this spec's approved boundary
+   (gap 2 = fresh) for the legacy section.
+6. `morning.build_digest` gains an `else` branch on the freshness gate:
+   the dropped You section is replaced with the 📵 note. The gate itself
+   (`trends.has_fresh_data`) is unchanged; `trends.py` is not touched
+   (it carries unmerged bella-branch drift).
+
 ## Testing
 
 `test_health.py` gains a `PhoneStateTests` case class (stdlib unittest,

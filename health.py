@@ -237,6 +237,41 @@ def _signed_pct(delta: float, base: float) -> str:
     return f"{delta / base * 100:+.0f}%"
 
 
+def staleness_note(daily_by_metric: dict[str, dict[str, float]], today: date,
+                   *, fresh_days: int = 1) -> str | None:
+    """📵 note explaining that iPhone activity has stopped arriving; None while
+    fresh. The default threshold (gap > 1 day) complements the digest's
+    has_fresh_data gate (STALE_AFTER_DAYS = 2) so build_digest swaps its
+    dropped You section for this note the moment the feed freezes;
+    render_section passes PHONE_FRESH_DAYS for the legacy numeric section."""
+    gaps = [
+        g for g in (
+            _days_since_last(daily_by_metric.get(m, {}), today)
+            for m, _how, _label, _fmt in ACTIVITY_METRICS
+        )
+        if g is not None
+    ]
+    gap = min(gaps) if gaps else None
+    if gap is None:
+        return f"📵 No phone health data in the last {LOOKBACK_DAYS} days — check Health Auto Export."
+    if gap <= fresh_days:
+        return None
+    last_date = today - timedelta(days=gap)
+    last_iso = last_date.isoformat()
+    parts = [
+        f"{fmt.format(d[max(d)])} {label}"
+        for metric, _how, label, fmt in ACTIVITY_METRICS
+        if (d := daily_by_metric.get(metric, {})) and max(d) == last_iso
+    ]
+    note = (
+        f"📵 No phone health data for {gap} days (last data {last_date:%b %-d}) — "
+        f"open Health Auto Export on the iPhone and re-run its automation."
+    )
+    if parts:
+        note += f"\n   Last activity ({last_date:%b %-d}): " + " · ".join(parts)
+    return note
+
+
 # --------------------------------------------------------------------- render
 def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) -> str:
     """Render the health section. Pure.
@@ -264,23 +299,8 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     ]
     phone_gap = min(phone_gaps) if phone_gaps else None
 
-    if phone_gap is None:
-        L.append(f"📵 No phone health data in the last {LOOKBACK_DAYS} days — check Health Auto Export.")
-        L.append("")
-    elif phone_gap > PHONE_FRESH_DAYS:
-        last_date = today - timedelta(days=phone_gap)
-        last_iso = last_date.isoformat()
-        parts = [
-            f"{fmt.format(d[max(d)])} {label}"
-            for metric, _how, label, fmt in ACTIVITY_METRICS
-            if (d := daily_by_metric.get(metric, {})) and max(d) == last_iso
-        ]
-        L.append(
-            f"📵 No phone health data for {phone_gap} days (last data {last_date:%b %-d}) — "
-            f"open Health Auto Export on the iPhone and re-run its automation."
-        )
-        if parts:
-            L.append(f"   Last activity ({last_date:%b %-d}): " + " · ".join(parts))
+    if phone_gap is None or phone_gap > PHONE_FRESH_DAYS:
+        L.append(staleness_note(daily_by_metric, today, fresh_days=PHONE_FRESH_DAYS))
         L.append("")
     else:
         activity_day = max(steps) if steps else None
