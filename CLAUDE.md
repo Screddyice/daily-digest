@@ -63,7 +63,7 @@ and `nebos.build_section` return `None` when unconfigured/unreachable/empty;
 
 ## Env vars
 `NEB_COMPOSIO_MCP_API_KEY` (+ `NEB_COMPOSIO_MCP_USER_ID`) for the Top-5 section,
-`NEBOS_MCP_TOKEN` (+ `NEBOS_MCP_URL`, default `https://teamnebula-os.web.app/api/mcp`)
+`NEBOS_MCP_TOKEN` (+ `NEBOS_MCP_URL`, default `https://nebos-api-960873997677.us-central1.run.app/api/mcp`)
 for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (NEBOS Assist),
 `SLACK_CHANNEL=D0AGFSC9PHN`, `NEBOS_CLIENT_DOMAINS=rivus.mx,newcalgon.net,rs21.io`,
 `RETRO_TZ` (optional — timezone for the Call Retro's "today" window + header,
