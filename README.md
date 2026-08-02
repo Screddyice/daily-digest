@@ -64,3 +64,9 @@ python3 -m unittest test_trends test_bella test_morning test_health test_nebos t
 ```
 
 Stdlib only — no dependencies.
+
+## NebOS MCP
+
+Meeting store calls use NebOS **v2** MCP at
+`https://nebos-api-960873997677.us-central1.run.app/api/mcp`
+(`NEBOS_MCP_URL` / `NEBOS_MCP_TOKEN`). v1 Firebase hosting is retired for this client.

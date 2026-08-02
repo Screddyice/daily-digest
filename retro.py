@@ -48,7 +48,7 @@ def _today():
     return datetime.now(RETRO_TZ).date()
 
 # NEBOS MCP endpoint — the Fireflies-fed meeting store. Bearer-token auth.
-NEBOS_MCP_URL = os.environ.get("NEBOS_MCP_URL", "https://teamnebula-os.web.app/api/mcp")
+NEBOS_MCP_URL = os.environ.get("NEBOS_MCP_URL", "https://nebos-api-960873997677.us-central1.run.app/api/mcp")
 MEETING_LIST = "meeting_list"
 
 MEETING_FETCH_LIMIT = 40          # how many recent meetings to scan for "today"
