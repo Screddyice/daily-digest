@@ -24,7 +24,7 @@ Two digests, both posted to Slack DM **`D0AGFSC9PHN`** (Shawn ↔ NEBOS Assist b
 | file | role |
 |---|---|
 | `trends.py` | pure trend classification + rendering; `has_fresh_data()` |
-| `health.py` | HAE fetch + legacy numeric renderer |
+| `health.py` | corpus health_metrics fetch + legacy numeric renderer |
 | `bella.py` | Fi collar (Bella) fetch + local step history; returns None when no new data |
 | `nebos.py` | Top-5 work section: Linear issues + client Gmail, ranked |
 | `meetings.py` | today's calendar; one combined context bullet per meeting |
@@ -57,7 +57,7 @@ internal `teamnebula.ai` mail are filtered out.
 ## "No new data → drop the section"
 The digest omits a section entirely when its feed has no new data (synced today or
 yesterday; `trends.has_fresh_data` / `STALE_AFTER_DAYS`) instead of showing a stale
-`⚠️ hasn't synced` warning. Applies to You (HAE) and Bella (Fi). `bella.build_section`
+`⚠️ hasn't synced` warning. Applies to You (corpus health_metrics) and Bella (Fi). `bella.build_section`
 and `nebos.build_section` return `None` when unconfigured/unreachable/empty;
 `morning.build_digest` uses `_UNSET` sentinels so `None` means *omit*, not *re-fetch*.
 
@@ -70,7 +70,7 @@ for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (NEBOS Assist),
 default `America/Los_Angeles`; set `Europe/London` etc. for where Shawn is based),
 `PENDING_LOOKBACK_DAYS` (optional, default 3 — window for the Morning Digest's
 `📋 Still pending` section; needs `NEBOS_MCP_TOKEN` like the Call Retro),
-HAE (`HAE_BASE_URL`/`HAE_READ_TOKEN` or connector JSON), `FI_EMAIL`/`FI_PASSWORD`,
+`RDS_URL` (corpus DSN — health section; HAE was removed 2026-08-21), `FI_EMAIL`/`FI_PASSWORD`,
 `BELLA_HISTORY_GIST` (optional — a secret gist id; with `GITHUB_TOKEN` it makes
 Bella's step/behavior history round-trip through the gist so trends survive an
 ephemeral sandbox that wipes the local `~/.daily-digest` file; sleep is unaffected,

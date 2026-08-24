@@ -9,7 +9,8 @@ One Slack DM, led by the day's priorities and followed by personal trends:
   or do, merged from recent meeting notes that name him as owner and open Linear
   tickets assigned to his user. Each item shows its meeting or Linear source;
   Gmail, ownerless notes, and other teammates' tasks stay out.
-- **You** — five plain-English lines from live Health Auto Export (HAE) data:
+- **You** — five plain-English lines from corpus `health_metrics` rows
+  (Apple Health → ChatGPT scheduled Task → health-connector MCP → corpus):
   activity & exercise, lung health (blood oxygen), stress signals (HRV +
   resting HR), sleep sufficiency, and an illness watch that fires when
   recovery and oxygen move the wrong way together. Each line says
@@ -29,7 +30,7 @@ or yesterday.
 | file | role |
 |---|---|
 | `trends.py` | pure trend classification + rendering (no I/O) |
-| `health.py` | HAE fetch + the legacy numeric renderer |
+| `health.py` | corpus health_metrics fetch + the legacy numeric renderer |
 | `bella.py` | Fi login/GraphQL fetch + local step history |
 | `nebos.py` | Shawn Top-5 ranking — assigned Linear + recent meeting actions |
 | `meetings.py` | today's calendar via Composio |
@@ -52,7 +53,7 @@ line of its action items, parsed from the meeting's Gemini notes (`Summary` +
 `Next steps`). It uses the newest "Notes by Gemini" doc; set
 `NEBOS_RETRO_MEETING` to pin it to a specific recurring meeting by title.
 
-Env: see `.env.example` (HAE base/token or connector JSON; `FI_EMAIL` /
+Env: see `.env.example` (`RDS_URL` corpus DSN for the health section; `FI_EMAIL` /
 `FI_PASSWORD` for Bella; `NEB_COMPOSIO_MCP_API_KEY` for the NEBOS + meetings
 sections, with optional `NEBOS_COMPANY_DOMAIN`, default `teamnebula.ai`, to mark
 which mail is internal).

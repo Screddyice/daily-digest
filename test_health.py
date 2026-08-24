@@ -67,14 +67,18 @@ class WatchStateTests(unittest.TestCase):
         self.assertIn("steps", out)
 
 
-class NoHAEConfiguredTests(unittest.TestCase):
-    """A cloud sandbox with no HAE env vars and no connector file must degrade to
-    empty (You section drops), never crash the whole digest."""
+class NoCorpusConfiguredTests(unittest.TestCase):
+    """A host with no corpus DB configured (no RDS_URL) must degrade to empty
+    (You section drops), never crash the whole digest."""
 
-    def test_load_hae_config_returns_empty_when_no_env_and_no_file(self):
-        env = {"HAE_CONNECTOR_JSON": "/nonexistent/definitely-not-here.json"}
-        with mock.patch.dict(health.os.environ, env, clear=True):
-            self.assertEqual(health.load_hae_config(), ("", ""))
+    def test_load_corpus_config_returns_empty_without_rds_url(self):
+        with mock.patch.dict(health.os.environ, {}, clear=True):
+            self.assertEqual(health.load_corpus_config(), ("", ""))
+
+    def test_load_corpus_config_reports_configured_with_rds_url(self):
+        with mock.patch.dict(health.os.environ, {"RDS_URL": "postgresql://x"}, clear=True):
+            base, token = health.load_corpus_config()
+            self.assertTrue(base and token)
 
     def test_fetch_daily_by_metric_short_circuits_without_creds(self):
         called = []
@@ -86,7 +90,7 @@ class NoHAEConfiguredTests(unittest.TestCase):
         out = health.fetch_daily_by_metric(fetch=fetch_should_not_run,
                                            config=lambda: ("", ""))
         self.assertEqual(out, {})
-        self.assertEqual(called, [])  # no HAE requests attempted
+        self.assertEqual(called, [])  # no corpus reads attempted
 
 
 class PhoneStateTests(unittest.TestCase):
@@ -126,7 +130,7 @@ class PhoneStateTests(unittest.TestCase):
     def test_no_activity_data_shows_thirty_day_message(self):
         data = {"heart_rate_variability": _series(TODAY - timedelta(days=20), 8, 45)}
         out = health.render_section(data, TODAY)
-        self.assertIn("📵 No phone health data in the last 30 days — check Health Auto Export.", out)
+        self.assertIn("📵 No phone health data in the last 30 days — check the ChatGPT health push.", out)
 
     def test_stale_phone_and_stale_wrist_show_both_lines(self):
         data = self._activity(TODAY - timedelta(days=8))
