@@ -26,6 +26,8 @@ Two digests, both posted to Slack DM **`D0AGFSC9PHN`** (Shawn ↔ NEBOS Assist b
 | `trends.py` | pure trend classification + rendering; `has_fresh_data()` |
 | `health.py` | corpus health_metrics fetch + legacy numeric renderer |
 | `bella.py` | Fi collar (Bella) fetch + local step history; returns None when no new data |
+| `bella_corpus.py` | allowlisted Fi-to-Corpus mapping; writes `source=fi` + `bella_` rows |
+| `bella_sync.py` | cloud Fi validation and Corpus sync command |
 | `nebos.py` | Top-5 work section: Linear issues + client Gmail, ranked |
 | `meetings.py` | today's calendar; one combined context bullet per meeting |
 | `retro.py` | Call Retro: NEBOS meeting-store (Fireflies) recap of today's calls |
@@ -75,6 +77,11 @@ default `America/Los_Angeles`; set `Europe/London` etc. for where Shawn is based
 Bella's step/behavior history round-trip through the gist so trends survive an
 ephemeral sandbox that wipes the local `~/.daily-digest` file; sleep is unaffected,
 served live by Fi).
+
+`bella_sync.py` needs `FI_EMAIL`, `FI_PASSWORD`, and `RDS_URL`. Its dry run
+authenticates, resolves Bella, and lists supported metric names without writing
+or printing health values. The combined health relay invokes it on
+`screddy-consult`; no Mac process participates.
 `DRY_RUN=1` prints instead of posting. `DIGEST_NO_ALERTS=1` skips the stateful
 Telegram alerts (the digest still posts) — set it in stateless runtimes like a
 cloud routine, where the edge-filter STATE_PATH can't persist between runs.
@@ -87,7 +94,9 @@ it never crashes the digest.
 ```bash
 DRY_RUN=1 python3 morning.py
 DRY_RUN=1 python3 retro.py
-python3 -m unittest discover -p 'test_*.py'   # currently 184 tests, all passing
+~/shawn-corpus/.venv/bin/python3 bella_sync.py --dry-run
+~/shawn-corpus/.venv/bin/python3 bella_sync.py
+python3 -m unittest discover -p 'test_*.py'
 ```
 
 ## Claude routine behavior

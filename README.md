@@ -27,12 +27,11 @@ or yesterday.
 
 ## Combined daily health delivery
 
-The approved next step stores Bella's Fi readings in Corpus under
+`bella_sync.py` stores Bella's validated Fi readings in Corpus under
 `source="fi"`, `bella_` metric names, and `raw.subject="Bella"`. The daily health
-relay will then build one numeric report with separate `SHAWN` and `BELLA`
-sections and send the same report by email and Hermes Telegram. The existing
-ChatGPT health email remains Shawn's ingest source and is marked read after its
-metrics reach Corpus.
+relay can then build one numeric report with separate `SHAWN` and `BELLA`
+sections. The existing ChatGPT health email remains Shawn's ingest source and
+is marked read after its metrics reach Corpus.
 
 The cross-repository contract, retry behavior, anomaly rules, and cloud rollout
 are documented in
@@ -45,6 +44,8 @@ are documented in
 | `trends.py` | pure trend classification + rendering (no I/O) |
 | `health.py` | corpus health_metrics fetch + the legacy numeric renderer |
 | `bella.py` | Fi login/GraphQL fetch + local step history |
+| `bella_corpus.py` | allowlisted Fi-to-Corpus metric mapping and writer |
+| `bella_sync.py` | cloud CLI for dry-run validation and live Corpus sync |
 | `nebos.py` | Shawn Top-5 ranking — assigned Linear + recent meeting actions |
 | `meetings.py` | today's calendar via Composio |
 | `morning.py` | morning digest composition + Slack delivery |
@@ -55,6 +56,9 @@ are documented in
 ```bash
 DRY_RUN=1 python3 morning.py     # print, don't post
 python3 morning.py               # post to Slack when SLACK_BOT_TOKEN + SLACK_CHANNEL set
+
+~/shawn-corpus/.venv/bin/python3 bella_sync.py --dry-run  # prove Fi without writing
+~/shawn-corpus/.venv/bin/python3 bella_sync.py            # write Bella rows to Corpus
 
 DRY_RUN=1 python3 retro.py       # Call Retro (end-of-day): NEBOS Top 5 + call recap
 python3 retro.py                 # post the retro to Slack
@@ -70,6 +74,10 @@ Env: see `.env.example` (`RDS_URL` corpus DSN for the health section; `FI_EMAIL`
 `FI_PASSWORD` for Bella; `NEB_COMPOSIO_MCP_API_KEY` for the NEBOS + meetings
 sections, with optional `NEBOS_COMPANY_DOMAIN`, default `teamnebula.ai`, to mark
 which mail is internal).
+
+The combined health relay runs these commands on `screddy-consult` before it
+queries Bella's rows. The process needs `FI_EMAIL`, `FI_PASSWORD`, and `RDS_URL`
+in its cloud service environment. It does not use the Mac runtime.
 
 ## Tests
 
