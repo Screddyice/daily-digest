@@ -21,6 +21,7 @@ import os
 import re
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from http.cookiejar import CookieJar
 from pathlib import Path
@@ -99,6 +100,19 @@ TREND_KEYS = {
     "Licking":    ("licking_events", "licking_min"),
     "Scratching": ("scratching_events", None),
 }
+
+
+class FiSyncError(RuntimeError):
+    """Fi could not produce a current, attributable Bella snapshot."""
+
+
+@dataclass(frozen=True)
+class BellaSnapshot:
+    pet_id: str
+    pet_name: str
+    synced_at: str
+    series: dict[str, dict[str, float]]
+    directions: dict[str, str]
 
 
 # ------------------------------------------------------------------ transport
@@ -419,27 +433,24 @@ def _history_store(env: dict, history_path: Path):
 
 
 # ---------------------------------------------------------------- composition
-def build_section(today: date | None = None, *, env: dict | None = None,
-                  history_path: Path = DEFAULT_HISTORY,
-                  profile_path: Path = DEFAULT_PROFILE, gql=None,
-                  pet_name: str | None = None) -> str | None:
-    """Bella's rendered section, or None when there's no new data to show — Fi
-    unconfigured/unreachable, or her collar feed frozen or empty. The digest
-    drops the section entirely on None rather than surfacing a stale one."""
-    today = today or date.today()
+def collect_snapshot(today: date, *, env: dict | None = None,
+                     history_path: Path = DEFAULT_HISTORY,
+                     profile_path: Path = DEFAULT_PROFILE, gql=None,
+                     pet_name: str | None = None) -> BellaSnapshot:
+    """Collect one current Fi snapshot and merge it into Bella's history."""
     env = os.environ if env is None else env
     pet_name = pet_name or env.get("FI_PET_NAME", "Bella")
 
     email, password = env.get("FI_EMAIL"), env.get("FI_PASSWORD")
     if gql is None and not (email and password):
-        return None  # Fi not configured — nothing new to report
+        raise FiSyncError("Fi credentials are not configured")
 
     try:
         if gql is None:
             gql = make_gql(email, password)
         pet_id = find_pet_id(gql("pets"), pet_name)
         if not pet_id:
-            return None  # not on this Fi account — nothing to report
+            raise FiSyncError(f"pet {pet_name!r} is not on this Fi account")
         steps_today = parse_daily_steps(gql("steps", pet_id=pet_id))
         sleep = parse_rest_summaries(gql("rest", pet_id=pet_id))
         try:
@@ -454,9 +465,13 @@ def build_section(today: date | None = None, *, env: dict | None = None,
             save_profile(profile_path, parse_profile(gql("profile", pet_id=pet_id), today))
         except Exception as exc:
             logger.warning("bella: profile fetch failed: %s", exc)
-    except Exception as exc:  # collar unreachable — no new data, so no section
-        logger.warning("bella: fi fetch failed: %s", exc)
-        return None
+    except FiSyncError:
+        raise
+    except Exception as exc:
+        raise FiSyncError(f"Fi fetch failed: {exc}") from exc
+
+    if steps_today is None and not sleep and not behaviors_today:
+        raise FiSyncError("Fi returned no dated health values")
 
     # One load + one save per run (the store may be a remote gist). Steps and
     # behavior counts accumulate; sleep is a fresh multi-day window from Fi.
@@ -473,11 +488,40 @@ def build_section(today: date | None = None, *, env: dict | None = None,
     series = {k: hist.get(k, {}) for k in
               ("steps", "sleep", *{ek for ek, dk in TREND_KEYS.values() if ek},
                *{dk for ek, dk in TREND_KEYS.values() if dk})}
+    return BellaSnapshot(
+        pet_id=pet_id,
+        pet_name=pet_name,
+        synced_at=datetime.now(timezone.utc).isoformat(),
+        series=series,
+        directions=behavior_directions,
+    )
+
+
+def build_section(today: date | None = None, *, env: dict | None = None,
+                  history_path: Path = DEFAULT_HISTORY,
+                  profile_path: Path = DEFAULT_PROFILE, gql=None,
+                  pet_name: str | None = None) -> str | None:
+    """Bella's rendered section, or None when there's no new data to show."""
+    today = today or date.today()
+    try:
+        snapshot = collect_snapshot(
+            today,
+            env=env,
+            history_path=history_path,
+            profile_path=profile_path,
+            gql=gql,
+            pet_name=pet_name,
+        )
+    except FiSyncError as exc:
+        logger.warning("bella: fi fetch failed: %s", exc)
+        return None
+
+    series = snapshot.series
     if not trends.has_fresh_data(series, today):
         return None  # collar feed frozen or empty — drop the section
-    if not trends.has_readable_signal(series, today, behavior_directions):
+    if not trends.has_readable_signal(series, today, snapshot.directions):
         # Data arrived, but there's not yet enough history to read any trend —
         # the section would be all "baseline building" filler. Per Shawn: if
         # there's nothing meaningful from the collar, don't mention Bella at all.
         return None
-    return trends.render_pet_section(pet_name, series, today, behavior_directions)
+    return trends.render_pet_section(snapshot.pet_name, series, today, snapshot.directions)

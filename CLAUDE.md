@@ -24,8 +24,10 @@ Two digests, both posted to Slack DM **`D0AGFSC9PHN`** (Shawn ↔ NEBOS Assist b
 | file | role |
 |---|---|
 | `trends.py` | pure trend classification + rendering; `has_fresh_data()` |
-| `health.py` | HAE fetch + legacy numeric renderer |
+| `health.py` | corpus health_metrics fetch + legacy numeric renderer |
 | `bella.py` | Fi collar (Bella) fetch + local step history; returns None when no new data |
+| `bella_corpus.py` | allowlisted Fi-to-Corpus mapping; writes `source=fi` + `bella_` rows |
+| `bella_sync.py` | cloud Fi validation and Corpus sync command |
 | `nebos.py` | Top-5 work section: Linear issues + client Gmail, ranked |
 | `meetings.py` | today's calendar; one combined context bullet per meeting |
 | `retro.py` | Call Retro: NEBOS meeting-store (Fireflies) recap of today's calls |
@@ -57,7 +59,7 @@ internal `teamnebula.ai` mail are filtered out.
 ## "No new data → drop the section"
 The digest omits a section entirely when its feed has no new data (synced today or
 yesterday; `trends.has_fresh_data` / `STALE_AFTER_DAYS`) instead of showing a stale
-`⚠️ hasn't synced` warning. Applies to You (HAE) and Bella (Fi). `bella.build_section`
+`⚠️ hasn't synced` warning. Applies to You (corpus health_metrics) and Bella (Fi). `bella.build_section`
 and `nebos.build_section` return `None` when unconfigured/unreachable/empty;
 `morning.build_digest` uses `_UNSET` sentinels so `None` means *omit*, not *re-fetch*.
 
@@ -70,11 +72,16 @@ for the Call Retro's meeting store, `SLACK_BOT_TOKEN` (NEBOS Assist),
 default `America/Los_Angeles`; set `Europe/London` etc. for where Shawn is based),
 `PENDING_LOOKBACK_DAYS` (optional, default 3 — window for the Morning Digest's
 `📋 Still pending` section; needs `NEBOS_MCP_TOKEN` like the Call Retro),
-HAE (`HAE_BASE_URL`/`HAE_READ_TOKEN` or connector JSON), `FI_EMAIL`/`FI_PASSWORD`,
+`RDS_URL` (corpus DSN — health section; HAE was removed 2026-08-21), `FI_EMAIL`/`FI_PASSWORD`,
 `BELLA_HISTORY_GIST` (optional — a secret gist id; with `GITHUB_TOKEN` it makes
 Bella's step/behavior history round-trip through the gist so trends survive an
 ephemeral sandbox that wipes the local `~/.daily-digest` file; sleep is unaffected,
 served live by Fi).
+
+`bella_sync.py` needs `FI_EMAIL`, `FI_PASSWORD`, and `RDS_URL`. Its dry run
+authenticates, resolves Bella, and lists supported metric names without writing
+or printing health values. The combined health relay invokes it on
+`screddy-consult`; no Mac process participates.
 `DRY_RUN=1` prints instead of posting. `DIGEST_NO_ALERTS=1` skips the stateful
 Telegram alerts (the digest still posts) — set it in stateless runtimes like a
 cloud routine, where the edge-filter STATE_PATH can't persist between runs.
@@ -87,7 +94,9 @@ it never crashes the digest.
 ```bash
 DRY_RUN=1 python3 morning.py
 DRY_RUN=1 python3 retro.py
-python3 -m unittest discover -p 'test_*.py'   # currently 184 tests, all passing
+~/shawn-corpus/.venv/bin/python3 bella_sync.py --dry-run
+~/shawn-corpus/.venv/bin/python3 bella_sync.py
+python3 -m unittest discover -p 'test_*.py'
 ```
 
 ## Claude routine behavior

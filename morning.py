@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Personal morning digest — trends only, never numbers.
 
-Two sections: Shawn's health trends (live HAE) and Bella's health trends
+Two sections: Shawn's health trends (corpus health_metrics, fed by the
+Apple Health → ChatGPT → health-connector pipeline) and Bella's health trends
 (Fi Series 3 collar). Each line says increasing / decreasing / steady plus
 what it hints at (stress, sleep debt, getting sick) — raw values stay out.
 
-Stdlib only. Runs wherever HAE is reachable (neb-brain-hostinger) with
+Runs on screddy-consult next to the corpus DB (RDS_URL) with
 FI_EMAIL / FI_PASSWORD in the environment for Bella's section.
 """
 from __future__ import annotations
