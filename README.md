@@ -25,6 +25,19 @@ that section is dropped from the digest entirely, rather than re-rendering stale
 trends as if they were fresh. A section appears only when its feed synced today
 or yesterday.
 
+## Combined daily health delivery
+
+The approved next step stores Bella's Fi readings in Corpus under
+`source="fi"`, `bella_` metric names, and `raw.subject="Bella"`. The daily health
+relay will then build one numeric report with separate `SHAWN` and `BELLA`
+sections and send the same report by email and Hermes Telegram. The existing
+ChatGPT health email remains Shawn's ingest source and is marked read after its
+metrics reach Corpus.
+
+The cross-repository contract, retry behavior, anomaly rules, and cloud rollout
+are documented in
+[`docs/2026-08-30-combined-shawn-bella-health-design.md`](docs/2026-08-30-combined-shawn-bella-health-design.md).
+
 ## Modules
 
 | file | role |
