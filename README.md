@@ -9,12 +9,20 @@ One Slack DM, led by the day's priorities and followed by personal trends:
   or do, merged from recent meeting notes that name him as owner and open Linear
   tickets assigned to his user. Each item shows its meeting or Linear source;
   Gmail, ownerless notes, and other teammates' tasks stay out.
-- **You** — five plain-English lines from corpus `health_metrics` rows
-  (Apple Health → ChatGPT scheduled Task → health-connector MCP → corpus):
-  activity & exercise, lung health (blood oxygen), stress signals (HRV +
-  resting HR), sleep sufficiency, and an illness watch that fires when
-  recovery and oxygen move the wrong way together. Each line says
-  increasing / decreasing / steady — raw values never appear.
+- **You** — plain-English lines from corpus `health_metrics` rows (Apple Health
+  → the freddy connector → a ChatGPT scheduled Task → a daily email →
+  shawn-corpus `deploy/health_email_ingest.py` → corpus). Shawn's Apple Watch
+  went missing in 2026-09, so what the phone measures is the whole section:
+  activity (steps, distance, flights) and gait (walking speed, asymmetry,
+  double support). Gait is the closest thing left to the recovery read HRV and
+  resting heart rate used to give, since walking speed and double support both
+  move early on illness, injury and fatigue.
+
+  The wrist lines stay in the code and render nothing while no rows exist:
+  exercise and active energy, lung health (blood oxygen), stress signals (HRV +
+  resting HR), sleep sufficiency, and the illness watch that fires when
+  recovery and oxygen move the wrong way together. A watch coming back widens
+  the section on its own, with no code change.
 - **Bella** 🐕 — the same treatment for the dog, from her Fi Series 3 collar.
   Sleep history comes from Fi's rest feed; step history accumulates locally
   (`~/.daily-digest/bella_history.json`) since Fi only exposes the current

@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """Live, watch-aware health section for the morning digest.
 
-Reads CURRENT values from the Jarvis corpus `health_metrics` table (the
-pipeline is Apple Health → ChatGPT scheduled Task → health-connector MCP →
-corpus; see daily-digest docs/2026-08-21-digest-rework-design.md). HAE was
-removed 2026-08-21 — this module no longer talks to it. Both data paths are
-freshness-guarded: when the watch has been off, recovery metrics degrade to
-an explicit "watch off N days" line, and when the phone stops pushing
-entirely, activity degrades to a "no phone health data since <date>" line
-(📵) instead of rendering stale numbers as current.
+Reads CURRENT values from the corpus `health_metrics` table. The pipeline is
+Apple Health → the freddy connector → a ChatGPT scheduled Task → a daily email
+→ shawn-corpus `deploy/health_email_ingest.py` → corpus. HAE was removed
+2026-08-21 and the health-connector MCP was retired 2026-08-27; this module
+talks to neither.
+
+Shawn's Apple Watch went missing in 2026-09, so the source carries iPhone
+readings only: steps, distance, flights, and gait. The wrist metrics stay
+listed throughout. A metric nothing writes contributes no line, which means
+the section narrows on its own now and widens on its own if a watch returns,
+without a code change either way.
+
+Every data path is freshness-guarded: when the watch has been off, recovery
+degrades to an explicit "watch off N days" line, and when the phone stops
+pushing entirely, activity degrades to a "no phone health data since <date>"
+line (📵) instead of rendering stale numbers as current.
 
 Rendering (`render_section`) is pure stdlib and separated from I/O
 (`build_section`), so the watch-state / degradation logic stays
@@ -32,11 +40,29 @@ PHONE_FRESH_DAYS = 2        # activity metrics older than this read as "phone no
 MIN_BASELINE_SAMPLES = 7    # need ~a week before z-scores mean anything
 RECENT_WINDOW_DAYS = 3
 
-# (metric_id, aggregation, label, value format)
+# (metric_id, aggregation, label, value format, divisor)
+# The divisor exists for distance alone: the corpus stores metres, and "6,240 m
+# walked" is a worse line than "6.2 km walked".
+#
+# active_energy and apple_exercise_time stay listed even though Shawn's Apple
+# Watch went missing in 2026-09 and nothing writes them now. A metric with no
+# rows contributes no part and no freshness gap, so the block simply omits it
+# and starts including it again by itself if a watch returns.
 ACTIVITY_METRICS = (
-    ("step_count", "sum", "steps", "{:,.0f}"),
-    ("active_energy", "sum", "kcal", "{:,.0f}"),
-    ("apple_exercise_time", "sum", "min exercise", "{:.0f}"),
+    ("step_count", "sum", "steps", "{:,.0f}", 1),
+    ("distance_walking_running", "sum", "km", "{:,.1f}", 1000),
+    ("flights_climbed", "sum", "flights", "{:,.0f}", 1),
+    ("active_energy", "sum", "kcal", "{:,.0f}", 1),
+    ("apple_exercise_time", "sum", "min exercise", "{:.0f}", 1),
+)
+
+# Gait, which the phone measures on its own. Walking speed and double support
+# move early on illness, injury and fatigue, so with the watch gone this is the
+# closest thing left to the recovery read HRV and resting heart rate gave.
+GAIT_METRICS = (
+    ("walking_speed", "avg", "m/s", "{:.2f}"),
+    ("walking_asymmetry", "avg", "asymmetry", "{:.1f}%"),
+    ("walking_double_support", "avg", "double support", "{:.1f}%"),
 )
 WRIST_GAP_METRICS = ("heart_rate_variability", "resting_heart_rate")
 HEALTH_SOURCES = ("apple_health",)  # Shawn's namespace; Bella's collar rows use source="fi"
@@ -254,7 +280,7 @@ def staleness_note(daily_by_metric: dict[str, dict[str, float]], today: date,
     gaps = [
         g for g in (
             _days_since_last(daily_by_metric.get(m, {}), today)
-            for m, _how, _label, _fmt in ACTIVITY_METRICS
+            for m, _how, _label, _fmt, _div in ACTIVITY_METRICS
         )
         if g is not None
     ]
@@ -267,7 +293,7 @@ def staleness_note(daily_by_metric: dict[str, dict[str, float]], today: date,
     last_iso = last_date.isoformat()
     parts = [
         f"{fmt.format(d[max(d)])} {label}"
-        for metric, _how, label, fmt in ACTIVITY_METRICS
+        for metric, _how, label, fmt, div in ACTIVITY_METRICS
         if (d := daily_by_metric.get(metric, {})) and max(d) == last_iso
     ]
     note = (
@@ -300,7 +326,7 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     phone_gaps = [
         g for g in (
             _days_since_last(daily_by_metric.get(m, {}), today)
-            for m, _how, _label, _fmt in ACTIVITY_METRICS
+            for m, _how, _label, _fmt, _div in ACTIVITY_METRICS
         )
         if g is not None
     ]
@@ -312,10 +338,10 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     else:
         activity_day = max(steps) if steps else None
         parts: list[str] = []
-        for metric, _how, label, fmt in ACTIVITY_METRICS:
+        for metric, _how, label, fmt, div in ACTIVITY_METRICS:
             d = daily_by_metric.get(metric, {})
             if d:
-                parts.append(f"{fmt.format(d[max(d)])} {label}")
+                parts.append(f"{fmt.format(d[max(d)] / div)} {label}")
         if parts:
             day_lbl = f" ({date.fromisoformat(activity_day):%a})" if activity_day else ""
             today_steps = steps[max(steps)] if steps else 0
@@ -333,6 +359,37 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
                     comps.append(f"vs yesterday {y:,.0f} ({_signed_pct(today_steps - y, y)})")
                 if w is not None:
                     comps.append(f"vs week ago {w:,.0f} ({_signed_pct(today_steps - w, w)})")
+                if comps:
+                    L.append("   " + "  ·  ".join(comps))
+            L.append("")
+
+    # ---------- Gait (iPhone-sourced; freshness-guarded) ----------
+    gait_gaps = [
+        g for g in (
+            _days_since_last(daily_by_metric.get(m, {}), today)
+            for m, _how, _label, _fmt in GAIT_METRICS
+        )
+        if g is not None
+    ]
+    gait_gap = min(gait_gaps) if gait_gaps else None
+    if gait_gap is not None and gait_gap <= PHONE_FRESH_DAYS:
+        parts = []
+        for metric, _how, label, fmt in GAIT_METRICS:
+            d = daily_by_metric.get(metric, {})
+            if d:
+                parts.append(f"{fmt.format(d[max(d)])} {label}")
+        if parts:
+            L.append("*Gait:* " + " · ".join(parts))
+            speed = daily_by_metric.get("walking_speed", {})
+            if speed:
+                today_speed = speed[max(speed)]
+                comps = []
+                w = _value_n_days_ago(speed, today, 7)
+                if w is not None:
+                    comps.append(f"vs week ago {w:.2f} m/s ({_signed_pct(today_speed - w, w)})")
+                avg7 = _recent_avg(speed, 7)
+                if avg7:
+                    comps.append(f"7-day average {avg7:.2f} m/s")
                 if comps:
                     L.append("   " + "  ·  ".join(comps))
             L.append("")
@@ -430,13 +487,14 @@ def fetch_daily_by_metric(*, fetch: Callable = fetch_metric,
     if not (base and token):
         return {}  # corpus not configured (no RDS_URL) -> You drops
     wanted = (
-        ("step_count", "sum"),
-        ("active_energy", "sum"),
-        ("apple_exercise_time", "sum"),
-        ("heart_rate_variability", "avg"),
-        ("resting_heart_rate", "avg"),
-        ("blood_oxygen_saturation", "min_overnight"),
-        ("sleep_analysis", "sum"),
+        tuple((metric, how) for metric, how, _label, _fmt, _div in ACTIVITY_METRICS)
+        + tuple((metric, how) for metric, how, _label, _fmt in GAIT_METRICS)
+        + (
+            ("heart_rate_variability", "avg"),
+            ("resting_heart_rate", "avg"),
+            ("blood_oxygen_saturation", "min_overnight"),
+            ("sleep_analysis", "sum"),
+        )
     )
     daily_by_metric: dict[str, dict[str, float]] = {}
     for metric, how in wanted:
