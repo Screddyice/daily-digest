@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily morning digest @ 07:00 Asia/Makassar
+
+[Timer]
+OnCalendar=*-*-* 07:00:00 Asia/Makassar
+Persistent=true
+Unit=daily-digest-morning.service
+
+[Install]
+WantedBy=timers.target

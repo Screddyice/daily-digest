@@ -1,0 +1,10 @@
+[Unit]
+Description=End-of-day Call Retro @ 21:00 Asia/Makassar
+
+[Timer]
+OnCalendar=*-*-* 21:00:00 Asia/Makassar
+Persistent=true
+Unit=daily-digest-retro.service
+
+[Install]
+WantedBy=timers.target

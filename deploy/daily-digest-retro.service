@@ -1,0 +1,12 @@
+[Unit]
+Description=Call Retro — NEBOS meeting-store recap of today's calls -> Shawn DM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/daily-digest
+EnvironmentFile=%h/daily-digest/.env
+ExecStart=%h/shawn-corpus/.venv/bin/python3 retro.py
+StandardOutput=journal
+StandardError=journal

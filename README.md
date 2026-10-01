@@ -9,11 +9,20 @@ One Slack DM, led by the day's priorities and followed by personal trends:
   or do, merged from recent meeting notes that name him as owner and open Linear
   tickets assigned to his user. Each item shows its meeting or Linear source;
   Gmail, ownerless notes, and other teammates' tasks stay out.
-- **You** — five plain-English lines from live Health Auto Export (HAE) data:
-  activity & exercise, lung health (blood oxygen), stress signals (HRV +
-  resting HR), sleep sufficiency, and an illness watch that fires when
-  recovery and oxygen move the wrong way together. Each line says
-  increasing / decreasing / steady — raw values never appear.
+- **You** — plain-English lines from corpus `health_metrics` rows (Apple Health
+  → the freddy connector → a ChatGPT scheduled Task → a daily email →
+  shawn-corpus `deploy/health_email_ingest.py` → corpus). Shawn's Apple Watch
+  went missing in 2026-09, so what the phone measures is the whole section:
+  activity (steps, distance, flights) and gait (walking speed, asymmetry,
+  double support). Gait is the closest thing left to the recovery read HRV and
+  resting heart rate used to give, since walking speed and double support both
+  move early on illness, injury and fatigue.
+
+  The wrist lines stay in the code and render nothing while no rows exist:
+  exercise and active energy, lung health (blood oxygen), stress signals (HRV +
+  resting HR), sleep sufficiency, and the illness watch that fires when
+  recovery and oxygen move the wrong way together. A watch coming back widens
+  the section on its own, with no code change.
 - **Bella** 🐕 — the same treatment for the dog, from her Fi Series 3 collar.
   Sleep history comes from Fi's rest feed; step history accumulates locally
   (`~/.daily-digest/bella_history.json`) since Fi only exposes the current
@@ -24,13 +33,27 @@ that section is dropped from the digest entirely, rather than re-rendering stale
 trends as if they were fresh. A section appears only when its feed synced today
 or yesterday.
 
+## Combined daily health delivery
+
+`bella_sync.py` stores Bella's validated Fi readings in Corpus under
+`source="fi"`, `bella_` metric names, and `raw.subject="Bella"`. The daily health
+relay can then build one numeric report with separate `SHAWN` and `BELLA`
+sections. The existing ChatGPT health email remains Shawn's ingest source and
+is marked read after its metrics reach Corpus.
+
+The cross-repository contract, retry behavior, anomaly rules, and cloud rollout
+are documented in
+[`docs/2026-08-30-combined-shawn-bella-health-design.md`](docs/2026-08-30-combined-shawn-bella-health-design.md).
+
 ## Modules
 
 | file | role |
 |---|---|
 | `trends.py` | pure trend classification + rendering (no I/O) |
-| `health.py` | HAE fetch + the legacy numeric renderer |
+| `health.py` | corpus health_metrics fetch + the legacy numeric renderer |
 | `bella.py` | Fi login/GraphQL fetch + local step history |
+| `bella_corpus.py` | allowlisted Fi-to-Corpus metric mapping and writer |
+| `bella_sync.py` | cloud CLI for dry-run validation and live Corpus sync |
 | `nebos.py` | Shawn Top-5 ranking — assigned Linear + recent meeting actions |
 | `meetings.py` | today's calendar via Composio |
 | `morning.py` | morning digest composition + Slack delivery |
@@ -42,6 +65,9 @@ or yesterday.
 DRY_RUN=1 python3 morning.py     # print, don't post
 python3 morning.py               # post to Slack when SLACK_BOT_TOKEN + SLACK_CHANNEL set
 
+~/shawn-corpus/.venv/bin/python3 bella_sync.py --dry-run  # prove Fi without writing
+~/shawn-corpus/.venv/bin/python3 bella_sync.py            # write Bella rows to Corpus
+
 DRY_RUN=1 python3 retro.py       # Call Retro (end-of-day): NEBOS Top 5 + call recap
 python3 retro.py                 # post the retro to Slack
 ```
@@ -52,10 +78,14 @@ line of its action items, parsed from the meeting's Gemini notes (`Summary` +
 `Next steps`). It uses the newest "Notes by Gemini" doc; set
 `NEBOS_RETRO_MEETING` to pin it to a specific recurring meeting by title.
 
-Env: see `.env.example` (HAE base/token or connector JSON; `FI_EMAIL` /
+Env: see `.env.example` (`RDS_URL` corpus DSN for the health section; `FI_EMAIL` /
 `FI_PASSWORD` for Bella; `NEB_COMPOSIO_MCP_API_KEY` for the NEBOS + meetings
 sections, with optional `NEBOS_COMPANY_DOMAIN`, default `teamnebula.ai`, to mark
 which mail is internal).
+
+The combined health relay runs these commands on `screddy-consult` before it
+queries Bella's rows. The process needs `FI_EMAIL`, `FI_PASSWORD`, and `RDS_URL`
+in its cloud service environment. It does not use the Mac runtime.
 
 ## Tests
 

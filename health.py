@@ -1,25 +1,34 @@
 #!/usr/bin/env python3
 """Live, watch-aware health section for the morning digest.
 
-Reads CURRENT values straight from the self-hosted Health Auto Export (HAE)
-server every run. Both data paths are freshness-guarded: when the watch has
-been off, recovery metrics degrade to an explicit "watch off N days" line,
-and when the iPhone stops pushing entirely, activity degrades to a "no phone
-health data since <date>" line (📵) instead of rendering stale numbers as
-current.
+Reads CURRENT values from the corpus `health_metrics` table. The pipeline is
+Apple Health → the freddy connector → a ChatGPT scheduled Task → a daily email
+→ shawn-corpus `deploy/health_email_ingest.py` → corpus. HAE was removed
+2026-08-21 and the health-connector MCP was retired 2026-08-27; this module
+talks to neither.
 
-Stdlib only. Pure rendering (`render_section`) is separated from network I/O
-(`build_section`) so the watch-state / degradation logic is unit-testable.
+Shawn's Apple Watch went missing in 2026-09, so the source carries iPhone
+readings only: steps, distance, flights, and gait. The wrist metrics stay
+listed throughout. A metric nothing writes contributes no line, which means
+the section narrows on its own now and widens on its own if a watch returns,
+without a code change either way.
+
+Every data path is freshness-guarded: when the watch has been off, recovery
+degrades to an explicit "watch off N days" line, and when the phone stops
+pushing entirely, activity degrades to a "no phone health data since <date>"
+line (📵) instead of rendering stale numbers as current.
+
+Rendering (`render_section`) is pure stdlib and separated from I/O
+(`build_section`), so the watch-state / degradation logic stays
+unit-testable; the corpus read (`fetch_metric`) imports
+`shawn_corpus.KnowledgeClient` lazily and only when configured, so unit
+tests and hosts without the package never need it.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
-import urllib.parse
-import urllib.request
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from statistics import mean, pstdev
 from typing import Callable
 
@@ -31,54 +40,78 @@ PHONE_FRESH_DAYS = 2        # activity metrics older than this read as "phone no
 MIN_BASELINE_SAMPLES = 7    # need ~a week before z-scores mean anything
 RECENT_WINDOW_DAYS = 3
 
-# (metric_id, aggregation, label, value format)
+# (metric_id, aggregation, label, value format, divisor)
+# The divisor exists for distance alone: the corpus stores metres, and "6,240 m
+# walked" is a worse line than "6.2 km walked".
+#
+# active_energy and apple_exercise_time stay listed even though Shawn's Apple
+# Watch went missing in 2026-09 and nothing writes them now. A metric with no
+# rows contributes no part and no freshness gap, so the block simply omits it
+# and starts including it again by itself if a watch returns.
 ACTIVITY_METRICS = (
-    ("step_count", "sum", "steps", "{:,.0f}"),
-    ("active_energy", "sum", "kcal", "{:,.0f}"),
-    ("apple_exercise_time", "sum", "min exercise", "{:.0f}"),
+    ("step_count", "sum", "steps", "{:,.0f}", 1),
+    ("distance_walking_running", "sum", "km", "{:,.1f}", 1000),
+    ("flights_climbed", "sum", "flights", "{:,.0f}", 1),
+    ("active_energy", "sum", "kcal", "{:,.0f}", 1),
+    ("apple_exercise_time", "sum", "min exercise", "{:.0f}", 1),
+)
+
+# Gait, which the phone measures on its own. Walking speed and double support
+# move early on illness, injury and fatigue, so with the watch gone this is the
+# closest thing left to the recovery read HRV and resting heart rate gave.
+GAIT_METRICS = (
+    ("walking_speed", "avg", "m/s", "{:.2f}"),
+    ("walking_asymmetry", "avg", "asymmetry", "{:.1f}%"),
+    ("walking_double_support", "avg", "double support", "{:.1f}%"),
 )
 WRIST_GAP_METRICS = ("heart_rate_variability", "resting_heart_rate")
-DEFAULT_CONNECTOR = Path.home() / ".openjarvis" / "connectors" / "apple_health_remote.json"
+HEALTH_SOURCES = ("apple_health",)  # Shawn's namespace; Bella's collar rows use source="fi"
 
 
 # ----------------------------------------------------------------- config + I/O
-def load_hae_config() -> tuple[str, str]:
-    """(base_url, token). Prefers HAE_BASE_URL / HAE_READ_TOKEN env vars, else
-    falls back to the Apple Health connector JSON (HAE_CONNECTOR_JSON or the
-    openjarvis default location on neb-server)."""
-    base = os.environ.get("HAE_BASE_URL", "")
-    token = os.environ.get("HAE_READ_TOKEN", "")
-    if base and token:
-        return base, token
-    path = Path(os.environ.get("HAE_CONNECTOR_JSON", str(DEFAULT_CONNECTOR)))
-    try:
-        cfg = json.loads(path.read_text())
-    except (OSError, ValueError):
-        # No env vars and no readable connector file (e.g. a cloud sandbox with
-        # no HAE tunnel) — report "unconfigured" rather than crash. The caller
-        # treats empty creds as "no health data", so the You section just drops.
-        cfg = {}
-    return (
-        base or cfg.get("base_url") or cfg.get("url") or "",
-        token or cfg.get("read_token") or cfg.get("token") or "",
-    )
+def load_corpus_config() -> tuple[str, str]:
+    """("direct_db", dsn) when the corpus DB is configured, else ("", "").
+
+    Keeps the same tuple contract the HAE loader had, so the injectable
+    `config` seam in fetch_daily_by_metric / build_section (and every test
+    that fakes it) is unchanged. RDS_URL is the corpus DSN name used across
+    shawn-corpus (KnowledgeClient.from_env reads it). Empty creds mean "no
+    health data" — the You section just drops, never crashes the digest.
+    """
+    dsn = os.environ.get("RDS_URL", "")
+    return ("direct_db", dsn) if dsn else ("", "")
+
+
+# Kept as the old name too, so anything still importing load_hae_config gets
+# the corpus loader rather than an AttributeError.
+load_hae_config = load_corpus_config
+
+_client = None  # one KnowledgeClient per digest run, created lazily
+
+
+def _corpus_client():
+    global _client
+    if _client is None:
+        from shawn_corpus import KnowledgeClient  # lazy: unit tests fake fetch()
+        _client = KnowledgeClient.from_env()
+    return _client
 
 
 def fetch_metric(*, base_url: str, token: str, metric: str,
                  days: int = LOOKBACK_DAYS, timeout: float = 30.0) -> list[dict]:
-    """Raw HAE rows for one metric over the last `days` days (HAE start/end params)."""
-    now = datetime.now(timezone.utc)
-    qs = urllib.parse.urlencode({
-        "start": (now - timedelta(days=days)).strftime("%Y-%m-%d"),
-        "end": (now + timedelta(days=1)).strftime("%Y-%m-%d"),
-    })
-    url = f"{base_url.rstrip('/')}/api/metrics/{metric}?{qs}"
-    req = urllib.request.Request(url, headers={"api-key": token})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.load(resp)
-    if isinstance(data, list):
-        return data
-    return data.get("data") or data.get("metrics") or []
+    """Daily corpus rows for one metric, shaped like the old HAE rows.
+
+    Returns [{"date": ISO-8601, "qty": float}, ...] — exactly what
+    aggregate_daily consumes, so the aggregate→trend pipeline is untouched.
+    Rows come from health_metrics via KnowledgeClient.fetch_health_metrics
+    (one row per (metric, day, source), upserted by the health-connector).
+    base_url/token are the config-seam tuple, kept for signature
+    compatibility; base_url truthiness is the "configured" gate upstream.
+    """
+    rows = _corpus_client().fetch_health_metrics(
+        metric, days=days, sources=HEALTH_SOURCES,
+    )
+    return [{"date": r["date"], "qty": float(r["value"])} for r in rows]
 
 
 # -------------------------------------------------------------------- analysis
@@ -247,25 +280,25 @@ def staleness_note(daily_by_metric: dict[str, dict[str, float]], today: date,
     gaps = [
         g for g in (
             _days_since_last(daily_by_metric.get(m, {}), today)
-            for m, _how, _label, _fmt in ACTIVITY_METRICS
+            for m, _how, _label, _fmt, _div in ACTIVITY_METRICS
         )
         if g is not None
     ]
     gap = min(gaps) if gaps else None
     if gap is None:
-        return f"📵 No phone health data in the last {LOOKBACK_DAYS} days — check Health Auto Export."
+        return f"📵 No phone health data in the last {LOOKBACK_DAYS} days — check the ChatGPT health push."
     if gap <= fresh_days:
         return None
     last_date = today - timedelta(days=gap)
     last_iso = last_date.isoformat()
     parts = [
         f"{fmt.format(d[max(d)])} {label}"
-        for metric, _how, label, fmt in ACTIVITY_METRICS
+        for metric, _how, label, fmt, div in ACTIVITY_METRICS
         if (d := daily_by_metric.get(metric, {})) and max(d) == last_iso
     ]
     note = (
         f"📵 No phone health data for {gap} days (last data {last_date:%b %-d}) — "
-        f"open Health Auto Export on the iPhone and re-run its automation."
+        f"run the ChatGPT health push (scheduled Task → health-connector)."
     )
     if parts:
         note += f"\n   Last activity ({last_date:%b %-d}): " + " · ".join(parts)
@@ -293,7 +326,7 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     phone_gaps = [
         g for g in (
             _days_since_last(daily_by_metric.get(m, {}), today)
-            for m, _how, _label, _fmt in ACTIVITY_METRICS
+            for m, _how, _label, _fmt, _div in ACTIVITY_METRICS
         )
         if g is not None
     ]
@@ -305,10 +338,10 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
     else:
         activity_day = max(steps) if steps else None
         parts: list[str] = []
-        for metric, _how, label, fmt in ACTIVITY_METRICS:
+        for metric, _how, label, fmt, div in ACTIVITY_METRICS:
             d = daily_by_metric.get(metric, {})
             if d:
-                parts.append(f"{fmt.format(d[max(d)])} {label}")
+                parts.append(f"{fmt.format(d[max(d)] / div)} {label}")
         if parts:
             day_lbl = f" ({date.fromisoformat(activity_day):%a})" if activity_day else ""
             today_steps = steps[max(steps)] if steps else 0
@@ -326,6 +359,37 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
                     comps.append(f"vs yesterday {y:,.0f} ({_signed_pct(today_steps - y, y)})")
                 if w is not None:
                     comps.append(f"vs week ago {w:,.0f} ({_signed_pct(today_steps - w, w)})")
+                if comps:
+                    L.append("   " + "  ·  ".join(comps))
+            L.append("")
+
+    # ---------- Gait (iPhone-sourced; freshness-guarded) ----------
+    gait_gaps = [
+        g for g in (
+            _days_since_last(daily_by_metric.get(m, {}), today)
+            for m, _how, _label, _fmt in GAIT_METRICS
+        )
+        if g is not None
+    ]
+    gait_gap = min(gait_gaps) if gait_gaps else None
+    if gait_gap is not None and gait_gap <= PHONE_FRESH_DAYS:
+        parts = []
+        for metric, _how, label, fmt in GAIT_METRICS:
+            d = daily_by_metric.get(metric, {})
+            if d:
+                parts.append(f"{fmt.format(d[max(d)])} {label}")
+        if parts:
+            L.append("*Gait:* " + " · ".join(parts))
+            speed = daily_by_metric.get("walking_speed", {})
+            if speed:
+                today_speed = speed[max(speed)]
+                comps = []
+                w = _value_n_days_ago(speed, today, 7)
+                if w is not None:
+                    comps.append(f"vs week ago {w:.2f} m/s ({_signed_pct(today_speed - w, w)})")
+                avg7 = _recent_avg(speed, 7)
+                if avg7:
+                    comps.append(f"7-day average {avg7:.2f} m/s")
                 if comps:
                     L.append("   " + "  ·  ".join(comps))
             L.append("")
@@ -416,20 +480,21 @@ def render_section(daily_by_metric: dict[str, dict[str, float]], today: date) ->
 
 
 def fetch_daily_by_metric(*, fetch: Callable = fetch_metric,
-                          config: Callable[[], tuple[str, str]] = load_hae_config,
+                          config: Callable[[], tuple[str, str]] = load_corpus_config,
                           ) -> dict[str, dict[str, float]]:
-    """Fetch live values from HAE for every digest metric. Resilient per-metric."""
+    """Fetch live values from the corpus for every digest metric. Resilient per-metric."""
     base, token = config()
     if not (base and token):
-        return {}  # HAE not configured (no env, no connector file) -> You drops
+        return {}  # corpus not configured (no RDS_URL) -> You drops
     wanted = (
-        ("step_count", "sum"),
-        ("active_energy", "sum"),
-        ("apple_exercise_time", "sum"),
-        ("heart_rate_variability", "avg"),
-        ("resting_heart_rate", "avg"),
-        ("blood_oxygen_saturation", "min_overnight"),
-        ("sleep_analysis", "sum"),
+        tuple((metric, how) for metric, how, _label, _fmt, _div in ACTIVITY_METRICS)
+        + tuple((metric, how) for metric, how, _label, _fmt in GAIT_METRICS)
+        + (
+            ("heart_rate_variability", "avg"),
+            ("resting_heart_rate", "avg"),
+            ("blood_oxygen_saturation", "min_overnight"),
+            ("sleep_analysis", "sum"),
+        )
     )
     daily_by_metric: dict[str, dict[str, float]] = {}
     for metric, how in wanted:
@@ -444,8 +509,8 @@ def fetch_daily_by_metric(*, fetch: Callable = fetch_metric,
 
 def build_section(today: date | None = None, *,
                   fetch: Callable = fetch_metric,
-                  config: Callable[[], tuple[str, str]] = load_hae_config) -> str:
-    """Fetch live values from HAE and render the (legacy, numeric) section."""
+                  config: Callable[[], tuple[str, str]] = load_corpus_config) -> str:
+    """Fetch live values from the corpus and render the (legacy, numeric) section."""
     today = today or datetime.now(timezone.utc).date()
     return render_section(fetch_daily_by_metric(fetch=fetch, config=config), today)
 

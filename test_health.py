@@ -67,14 +67,18 @@ class WatchStateTests(unittest.TestCase):
         self.assertIn("steps", out)
 
 
-class NoHAEConfiguredTests(unittest.TestCase):
-    """A cloud sandbox with no HAE env vars and no connector file must degrade to
-    empty (You section drops), never crash the whole digest."""
+class NoCorpusConfiguredTests(unittest.TestCase):
+    """A host with no corpus DB configured (no RDS_URL) must degrade to empty
+    (You section drops), never crash the whole digest."""
 
-    def test_load_hae_config_returns_empty_when_no_env_and_no_file(self):
-        env = {"HAE_CONNECTOR_JSON": "/nonexistent/definitely-not-here.json"}
-        with mock.patch.dict(health.os.environ, env, clear=True):
-            self.assertEqual(health.load_hae_config(), ("", ""))
+    def test_load_corpus_config_returns_empty_without_rds_url(self):
+        with mock.patch.dict(health.os.environ, {}, clear=True):
+            self.assertEqual(health.load_corpus_config(), ("", ""))
+
+    def test_load_corpus_config_reports_configured_with_rds_url(self):
+        with mock.patch.dict(health.os.environ, {"RDS_URL": "postgresql://x"}, clear=True):
+            base, token = health.load_corpus_config()
+            self.assertTrue(base and token)
 
     def test_fetch_daily_by_metric_short_circuits_without_creds(self):
         called = []
@@ -86,7 +90,7 @@ class NoHAEConfiguredTests(unittest.TestCase):
         out = health.fetch_daily_by_metric(fetch=fetch_should_not_run,
                                            config=lambda: ("", ""))
         self.assertEqual(out, {})
-        self.assertEqual(called, [])  # no HAE requests attempted
+        self.assertEqual(called, [])  # no corpus reads attempted
 
 
 class PhoneStateTests(unittest.TestCase):
@@ -126,7 +130,7 @@ class PhoneStateTests(unittest.TestCase):
     def test_no_activity_data_shows_thirty_day_message(self):
         data = {"heart_rate_variability": _series(TODAY - timedelta(days=20), 8, 45)}
         out = health.render_section(data, TODAY)
-        self.assertIn("📵 No phone health data in the last 30 days — check Health Auto Export.", out)
+        self.assertIn("📵 No phone health data in the last 30 days — check the ChatGPT health push.", out)
 
     def test_stale_phone_and_stale_wrist_show_both_lines(self):
         data = self._activity(TODAY - timedelta(days=8))
@@ -147,3 +151,65 @@ class PhoneStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PhoneOnlyMetricsTests(unittest.TestCase):
+    """Shawn's Apple Watch went missing in 2026-09. What the iPhone still
+    measures is the whole of the section now."""
+
+    @staticmethod
+    def _phone(end: date) -> dict:
+        return {
+            "step_count": _series(end, 8, 8123),
+            "distance_walking_running": _series(end, 8, 6240),
+            "flights_climbed": _series(end, 8, 11),
+            "walking_speed": _series(end, 8, 1.34),
+            "walking_asymmetry": _series(end, 8, 1.2),
+            "walking_double_support": _series(end, 8, 28.4),
+        }
+
+    def test_distance_reads_in_km_not_metres(self):
+        out = health.render_section(self._phone(TODAY), TODAY)
+        self.assertIn("6.2 km", out)
+        self.assertNotIn("6,240 km", out)
+
+    def test_flights_and_gait_render(self):
+        out = health.render_section(self._phone(TODAY), TODAY)
+        self.assertIn("11 flights", out)
+        self.assertIn("*Gait:*", out)
+        self.assertIn("1.34 m/s", out)
+        self.assertIn("28.4% double support", out)
+
+    def test_gait_block_is_freshness_guarded(self):
+        out = health.render_section(self._phone(TODAY - timedelta(days=8)), TODAY)
+        self.assertNotIn("*Gait:*", out)
+
+    def test_absent_wrist_metrics_leave_activity_intact(self):
+        """A metric nothing writes contributes no part, rather than a blank."""
+        out = health.render_section(self._phone(TODAY), TODAY)
+        self.assertIn("*Activity", out)
+        self.assertNotIn("kcal", out)
+        self.assertNotIn("min exercise", out)
+        self.assertIn("recovery & sleep unavailable", out)
+
+    def test_wrist_metrics_return_without_a_code_change(self):
+        data = dict(self._phone(TODAY))
+        data["active_energy"] = _series(TODAY, 8, 412)
+        data["heart_rate_variability"] = _series(TODAY, 8, 38)
+        data["resting_heart_rate"] = _series(TODAY, 8, 56)
+        out = health.render_section(data, TODAY)
+        self.assertIn("412 kcal", out)
+        self.assertIn("*HRV:*", out)
+        self.assertIn("⌚ Watch on", out)
+
+    def test_fetch_list_covers_every_rendered_metric(self):
+        wanted = set()
+
+        def fetch(*, base_url, token, metric, days):
+            wanted.add(metric)
+            return []
+
+        health.fetch_daily_by_metric(fetch=fetch, config=lambda: ("direct_db", "dsn"))
+
+        rendered = {m for m, *_ in health.ACTIVITY_METRICS} | {m for m, *_ in health.GAIT_METRICS}
+        self.assertTrue(rendered <= wanted, rendered - wanted)

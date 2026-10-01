@@ -265,6 +265,35 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(bella.load_history(Path(tmp) / "nope.json"), {})
 
 
+class StructuredSnapshotTests(unittest.TestCase):
+    def test_collect_snapshot_exposes_dated_values_for_corpus(self):
+        responses = {
+            "pets": PETS_RESPONSE,
+            "steps": STEPS_RESPONSE,
+            "rest": REST_RESPONSE,
+            "trends": TRENDS_RESPONSE,
+            "profile": PROFILE_RESPONSE,
+        }
+
+        def fake_gql(kind, **kw):
+            return responses[kind]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = bella.collect_snapshot(
+                TODAY,
+                env={"FI_EMAIL": "x", "FI_PASSWORD": "y"},
+                history_path=Path(tmp) / "history.json",
+                profile_path=Path(tmp) / "profile.json",
+                gql=fake_gql,
+            )
+
+        self.assertEqual(snapshot.pet_id, "pet-123")
+        self.assertEqual(snapshot.pet_name, "Bella")
+        self.assertEqual(snapshot.series["steps"][TODAY.isoformat()], 8421.0)
+        self.assertEqual(snapshot.series["eating_events"][TODAY.isoformat()], 3.0)
+        self.assertEqual(snapshot.series["sleep"]["2026-06-11"], 500.0)
+
+
 class BuildSectionTests(unittest.TestCase):
     def test_no_credentials_omits_section(self):
         """No Fi creds → no new data → the section is dropped (None), not a
